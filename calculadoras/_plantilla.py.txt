@@ -1,0 +1,53 @@
+"""
+PLANTILLA para una calculadora nueva.
+
+Para crear una app nueva del suite:
+  1. Copia este archivo a  calculadoras/mi_calculo.py  (sin el .txt final,
+     y sin el guion bajo inicial: los modulos que empiezan con "_" se ignoran).
+  2. Reemplaza el motor, los campos y la metadata.
+  3. Listo. Aparece sola en la barra lateral y en el inicio, con formulario
+     y exportacion a PDF generados automaticamente.
+"""
+from __future__ import annotations
+
+import math
+from motor.base import Calculadora, Campo, Chequeo, Resultado, Valor
+
+
+def _motor(d: dict) -> dict:
+    """Calculo puro: recibe el diccionario de entradas, devuelve un dict de valores."""
+    r = {}
+    r["resultado"] = d["a"] * d["b"]          # <-- tus formulas aqui
+    r["ok"] = r["resultado"] > 0
+    return r
+
+
+def calcular(d: dict) -> Resultado:
+    r = _motor(d)
+    res = Resultado()
+    res.valores = [
+        Valor("resultado", "Resultado", r["resultado"], "unidad", "a · b", 2),
+    ]
+    res.chequeos = [
+        Chequeo("Verificación de ejemplo",
+                f"resultado = {r['resultado']:.2f}", ">", "0", r["ok"]),
+    ]
+    res.resumen = [
+        Valor("resultado", "Valor de diseño", r["resultado"], "unidad", "", 2),
+    ]
+    return res
+
+
+CALCULADORA = Calculadora(
+    id="mi_calculo",
+    nombre="Mi cálculo nuevo",
+    categoria="General",           # agrupa en inicio/sidebar
+    icono="🧮",
+    descripcion="Descripción breve de lo que resuelve.",
+    referencia="Fuente / norma",
+    campos=[
+        Campo("a", "Dato A", "u", 1.0, grupo="Datos", ayuda="Explicación de A"),
+        Campo("b", "Dato B", "u", 2.0, grupo="Datos", ayuda="Explicación de B"),
+    ],
+    funcion=calcular,
+)
