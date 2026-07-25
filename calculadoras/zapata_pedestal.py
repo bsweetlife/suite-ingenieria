@@ -234,38 +234,51 @@ def esquema(entradas: dict, res: Resultado):
 #  Dimensionamiento asistido: sugiere B y d que hacen cumplir las verificaciones
 # --------------------------------------------------------------------------- #
 def sugerir(d: dict) -> dict:
-    """Sugiere {B_adop, d_adop} (y b_ped si hace falta) minimos, a medidas
-    constructivas, que hacen cumplir corte, punzonado y aplastamiento.
-    El resto de los datos se mantiene. Los campos siguen siendo editables."""
+    """Sugiere {B_adop, d_adop, gamma_asumido} (y b_ped si hace falta) que hacen
+    cumplir TODAS las verificaciones: corte, punzonado, aplastamiento y factor γ.
+
+    El factor γ real depende de la geometria (peso de zapata + relleno). Se itera
+    —como en el metodo del libro— hasta que el γ asumido coincide con el real,
+    ajustando en cada paso B (por area), el pedestal (por aplastamiento) y d
+    (por corte/punzonado)."""
     base = dict(d)
     b = base["b_ped"]
-
-    # Punto fijo: B (por area del suelo) y b (por aplastamiento) se acoplan
+    gamma = base["gamma_asumido"]
     B = base["B_adop"]
-    for _ in range(6):
-        Areq = (base["gamma_asumido"] * base["Pu"]) / base["sigma_adm"]
-        B_area = math.sqrt(Areq) / 100.0                        # m
-        B = max(math.ceil(B_area / 0.05) * 0.05, b / 100.0 + 0.20)
+    d_adop = 20
+    prev = None
+    gamma_real = gamma
+
+    for _ in range(60):
+        # B por area requerida con el gamma actual, con piso por pedestal
+        Areq = (gamma * base["Pu"]) / base["sigma_adm"]
+        B = max(math.ceil(math.sqrt(Areq) / 100 / 0.05) * 0.05, b / 100.0 + 0.20)
         B = round(B, 2)
         B_cm = B * 100.0
-        # pedestal minimo: aplastamiento en base (B_cm/b < 4.007) y en columna
+        # pedestal minimo por aplastamiento (base y columna)
         b_base = B_cm / 4.0
         b_col = math.sqrt(base["Pu"] / (0.595 * base["fc"]))
-        b_nuevo = max(b, math.ceil(max(b_base, b_col) / 5.0) * 5.0)
-        if abs(b_nuevo - b) < 1:
-            b = b_nuevo
+        b = max(base["b_ped"], math.ceil(max(b_base, b_col) / 5.0) * 5.0)
+        # d minimo (paso 5 cm) por corte y punzonado con el gamma actual
+        d_adop = 20
+        while d_adop <= 200:
+            r = _motor(dict(base, B_adop=B, d_adop=d_adop, b_ped=b, gamma_asumido=gamma))
+            if r["corte_ok"] and r["punz_ok"]:
+                break
+            d_adop += 5
+        gamma_real = r["gamma_real"]
+        estado = (B, b, d_adop)
+        if estado == prev:            # geometria estable -> convergio
             break
-        b = b_nuevo
+        prev = estado
+        gamma = gamma_real            # el asumido se acerca al real
 
-    # d minimo (paso 5 cm) que pase corte y punzonado
-    d_adop = 20
-    while d_adop <= 200:
-        r = _motor(dict(base, B_adop=B, d_adop=d_adop, b_ped=b))
-        if r["corte_ok"] and r["punz_ok"]:
-            break
-        d_adop += 5
-
-    sug = {"B_adop": B, "d_adop": float(d_adop)}
+    # el gamma asumido final = gamma real de la geometria (asi la verificacion cumple)
+    sug = {
+        "B_adop": B,
+        "d_adop": float(d_adop),
+        "gamma_asumido": round(gamma_real, 2),
+    }
     if b != base["b_ped"]:
         sug["b_ped"] = float(b)
     return sug
@@ -297,8 +310,8 @@ CALCULADORA = Calculadora(
               grupo="Suelo", ayuda="σadm de diseño empleada para el area (E16 del Excel).",
               minimo=0.1),
         Campo("gamma_asumido", "Factor γ asumido", "", 1.2, grupo="Suelo",
-              ayuda="Segun profundidad H (pág. 253). 1.5 m < H < 3 m → γ ≈ 1.2.",
-              minimo=1.0, maximo=1.6, paso=0.05),
+              ayuda="Segun profundidad H (pág. 253). Se ajusta hasta que γ real ≈ γ asumido.",
+              minimo=1.0, maximo=3.0, paso=0.05),
         Campo("H", "Profundidad de la fundacion  H", "m", 2.0, grupo="Suelo",
               minimo=0.5, paso=0.1),
         Campo("gamma_s", "Peso unitario del suelo  γs", "kg/m³", 2200, grupo="Suelo",

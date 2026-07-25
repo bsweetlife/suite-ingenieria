@@ -147,8 +147,14 @@ def _entradas_actuales(calc: Calculadora) -> dict:
 
 def _aplicar_sugerencia(calc: Calculadora):
     """Callback: escribe en los campos los valores sugeridos que cumplen."""
+    limites = {c.clave: (c.minimo, c.maximo) for c in calc.campos}
     sug = calc.sugerir(_entradas_actuales(calc))
     for k, v in sug.items():
+        lo, hi = limites.get(k, (None, None))
+        if lo is not None:
+            v = max(v, lo)
+        if hi is not None:
+            v = min(v, hi)
         st.session_state[f"in_{k}"] = v
 
 
@@ -210,6 +216,7 @@ def vista_calculadora(calc: Calculadora):
                     partes = []
                     if "B_adop" in sug: partes.append(f"B = {sug['B_adop']:.2f} m")
                     if "d_adop" in sug: partes.append(f"d = {sug['d_adop']:.0f} cm")
+                    if "gamma_asumido" in sug: partes.append(f"γ = {sug['gamma_asumido']:.2f}")
                     if "b_ped" in sug: partes.append(f"pedestal b = {sug['b_ped']:.0f} cm")
                     st.caption("Con los datos actuales, cumple con: " + " · ".join(partes))
                     st.button("Usar valores sugeridos", key=f"sug_{calc.id}",
