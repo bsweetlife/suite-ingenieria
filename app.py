@@ -15,6 +15,7 @@ from motor.registro import cargar_calculadoras, por_categoria
 from motor.base import Calculadora, Resultado
 from motor.reporte import generar_pdf
 from motor.dibujo import primitivas_a_svg
+from motor.auth import requiere_login
 
 
 st.set_page_config(page_title="Suite de Ingeniería", page_icon="🏗️", layout="wide")
@@ -43,6 +44,9 @@ st.markdown("""
   }
 </style>
 """, unsafe_allow_html=True)
+
+# Control de acceso (contraseña compartida configurada en Secrets)
+requiere_login()
 
 
 # --------------------------------------------------------------------------- #
