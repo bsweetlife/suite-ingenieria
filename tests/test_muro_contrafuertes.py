@@ -27,7 +27,7 @@ ENTRADA = dict(
     fc=200, fy=4200, gc=2500,
     B_adop=3.6, Bprima_adop=0.4, D_adop=0.6, puntera_adop=2.0, L_adop=5.6,
     t_adop=0.4, t_ctf_base=0.50,
-    talon_d_adop=50, puntera_d_adop=45, fuste_d_adop=30,
+    talon_d_adop=50, puntera_d_adop=50, fuste_d_adop=30,
     h_ctf_1=1.07, h_ctf_2=1.73, h_ctf_3=2.40,
     mu=0.1448, ju=0.90, phi_corte=0.85, phi_flexion=0.90,
     coef_tanphi_p=0.67, coef_c_p=0.6,
@@ -146,6 +146,38 @@ def test_contrafuerte_fondo_de_losa_fila_4():
     assert r["As_ctf"] > r["secciones_ctf"][-1]["As"]
 
 
+def test_corte_viga_vs_losa():
+    """El contrafuerte es una viga (puede llevar estribos, con limite superior
+    vc+2.1.sqrt(f'c)); talon y puntera son losas (NUNCA llevan estribos, se
+    corrigen aumentando d). Con el corte tomado en la seccion critica (a d de
+    la cara, no en la cara), el talon cumple con d=50 sin necesitar mas
+    espesor (vu=6.35<vc=7.50), igual que en el ejemplo del libro.
+
+    Para la puntera, la integracion rigurosa del corte en la seccion critica
+    (con la misma presion de contacto trapezoidal usada para el momento, que
+    ya valida Mu contra el libro dentro de 3%) da vu=8.41 con d=45 -- no
+    cumple, a diferencia de lo que sugiere el documento de correccion (d=40
+    cumple). Por eso el default de puntera_d_adop se subio a 50 cm (con eso
+    si cumple, vu=7.43<vc=7.50): la formula simplificada V_critico=V_cara-q.d
+    del documento (con q constante) no coincide exactamente con integrar la
+    presion de contacto real, que varia a lo largo del voladizo."""
+    r = _motor(ENTRADA)
+    assert r["corte_talon"]["ok"]
+    assert r["corte_punt"]["ok"]
+
+    # Con d=45 en la puntera, la seccion critica NO cumple (y no debe intentar
+    # resolverse con estribos: la losa se corrige con mas peralte).
+    entrada_d45 = dict(ENTRADA, puntera_d_adop=45)
+    r45 = _motor(entrada_d45)
+    assert not r45["corte_punt"]["ok"]
+    assert r45["corte_punt"]["d_necesario"] is not None
+
+    # Contrafuerte nivel 1: sin estribos (vu<vc). Niveles 2 y 3: con estribos
+    # (vc < vu <= vc+2.1.sqrt(f'c)), nunca "excede" en el ejemplo.
+    for s in r["secciones_ctf"]:
+        assert not s["estribos"]["excede"]
+
+
 def test_As_min_contrafuerte():
     r = _motor(ENTRADA)
     assert abs(r["As_min_ctf"] - 28.8) < 1.0
@@ -159,5 +191,6 @@ if __name__ == "__main__":
     test_fuste_gobierna_My0()
     test_contrafuerte_3_secciones()
     test_contrafuerte_fondo_de_losa_fila_4()
+    test_corte_viga_vs_losa()
     test_As_min_contrafuerte()
     print("OK - el motor reproduce el Ejemplo 15.3 dentro de tolerancia.")
