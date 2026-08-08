@@ -129,6 +129,23 @@ def test_contrafuerte_3_secciones():
     assert secciones[2]["estribos"]["necesita"] and secciones[2]["estribos"]["s"] == 30.0
 
 
+def test_contrafuerte_fondo_de_losa_fila_4():
+    """El contrafuerte continua como voladizo hasta el FONDO DE LA LOSA
+    (H=Bpanel+D), no solo hasta la base del fuste. Ahi el canto ya no crece
+    (h=2.40, igual a la seccion 3) pero el momento si: M4 = M3 + V3.D. Esto
+    reproduce la 4ta fila del Ejemplo 15.3 (M=290 tm, Mu=493 tm, As=68.96 cm2),
+    que es la que gobierna el armado principal del contrafuerte."""
+    r = _motor(ENTRADA)
+    fondo = r["fondo_losa_ctf"]
+    assert abs(fondo["M"] - 290000) < 290000 * 0.02
+    assert abs(fondo["Mu"] - 493000) < 493000 * 0.02
+    assert abs(fondo["As"] - 68.96) < 68.96 * 0.03
+    # As_ctf (el que gobierna el armado) debe ser el del fondo de losa, no el
+    # de la seccion 3 (base del fuste, que solo llega a ~55-56 cm2).
+    assert abs(r["As_ctf"] - fondo["As"]) < 1e-6
+    assert r["As_ctf"] > r["secciones_ctf"][-1]["As"]
+
+
 def test_As_min_contrafuerte():
     r = _motor(ENTRADA)
     assert abs(r["As_min_ctf"] - 28.8) < 1.0
@@ -141,5 +158,6 @@ if __name__ == "__main__":
     test_verificaciones_de_estabilidad_cumplen()
     test_fuste_gobierna_My0()
     test_contrafuerte_3_secciones()
+    test_contrafuerte_fondo_de_losa_fila_4()
     test_As_min_contrafuerte()
     print("OK - el motor reproduce el Ejemplo 15.3 dentro de tolerancia.")

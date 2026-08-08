@@ -18,13 +18,16 @@ fuente que se esta validando.
 NOTA SOBRE EL CONTRAFUERTE: la carga horizontal sobre el contrafuerte usa el
 mismo recorte por traccion (z0) que el empuje activo global (Sec. 2): la
 presion es triangular pura a partir de z0 (no desde el tope del fuste). Con
-ese ajuste, las 3 secciones "1, 2, 3(base)" del libro (y = Bpanel/3, 2Bpanel/3,
-Bpanel) reproducen M, As y vu del ejemplo con menos de 2% de diferencia. La
-tabla original del libro incluye una 4ta fila (misma seccion base, canto
-h=2.40, pero M=290 tm en vez de 233 tm) que no se pudo derivar de las formulas
-de la fuente -- probablemente incluye un efecto adicional (p.ej. la reaccion
-de la losa del talon sobre el contrafuerte) no descrito en el material
-disponible. Se advierte en una nota de Resultado en vez de asumirlo en silencio.
+ese ajuste, las secciones 1 y 2 (y = Bpanel/3, 2Bpanel/3) reproducen M, As y
+vu del ejemplo con menos de 2% de diferencia. La seccion 3 (base del fuste,
+y=Bpanel) tambien reproduce el corte del ejemplo exacto, pero el ejemplo NO
+diseña el acero principal ahi: el contrafuerte sigue como voladizo hasta el
+FONDO DE LA LOSA (H = Bpanel + D). En ese tramo el canto h ya no crece (el
+paramento posterior se vuelve vertical), pero el momento si sigue creciendo
+porque el corte acumulado V3 actua sobre el brazo adicional D:
+    M_fondo = M3 + V3.D
+Con esto, M_fondo/As_fondo reproducen la 4ta fila del Ejemplo 15.3 (M~290 tm,
+As~68.96 cm2) dentro de ~1%, y es la que gobierna el armado principal.
 """
 from __future__ import annotations
 
@@ -339,14 +342,27 @@ def _motor(d: dict) -> dict:
         })
     r["secciones_ctf"] = secciones_ctf
 
-    # Seccion base = ultima (critica): gobierna el armado principal.
+    # Seccion 3 (base del fuste, y=Bpanel) no es el apoyo real del contrafuerte:
+    # este continua como voladizo hasta el FONDO DE LA LOSA (H = Bpanel + D). De
+    # ahi hacia abajo el paramento posterior ya es vertical (h no crece mas),
+    # pero el corte acumulado V3 sigue generando momento en el tramo D:
+    #   M4 = M3 + V3.D   (mismo V, mismo h -> mismo d y theta que la seccion 3)
+    # Con esto, M4/As4 reproducen la 4ta fila del Ejemplo 15.3 (M~290 tm,
+    # As~68.96 cm2) dentro de ~1%.
     base_ctf = secciones_ctf[-1]
-    As_ctf = base_ctf["As"]
+    M4 = base_ctf["M"] + base_ctf["V"] * D
+    Mu4 = 1.7 * M4
+    As4 = (Mu4 * 100) / (phi_flexion * fy * ju * base_ctf["d"]) / math.cos(base_ctf["theta"])
+    r["fondo_losa_ctf"] = {"M": M4, "Mu": Mu4, "As": As4, "d": base_ctf["d"],
+                            "theta": base_ctf["theta"], "V": base_ctf["V"]}
+
+    # El fondo de la losa gobierna el armado principal (mayor momento, mismo d).
+    As_ctf = As4
     As_min_ctf = (14 / fy) * (t * 100) * base_ctf["d"]      # 14/fy . b . d (b = espesor tipico del contrafuerte)
     ctf_corte_ok = all(s["corte_ok"] for s in secciones_ctf)
 
     r.update(As_ctf=As_ctf, As_min_ctf=As_min_ctf, d_ctf=base_ctf["d"], theta_ctf=base_ctf["theta"],
-              Mu_ctf=base_ctf["Mu"], V_ctf=base_ctf["V"], ctf_corte_ok=ctf_corte_ok)
+              Mu_ctf=Mu4, V_ctf=base_ctf["V"], ctf_corte_ok=ctf_corte_ok)
 
     return r
 
@@ -372,8 +388,8 @@ def calcular(d: dict) -> Resultado:
         Valor("As_talon", "Acero talon", r["As_talon"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
         Valor("Mu_punt", "Momento ultimo puntera", r["Mu_punt"], "kg.m", "1.7 . M1", 0),
         Valor("As_punt", "Acero puntera", r["As_punt"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
-        Valor("Mu_ctf", "Momento ultimo contrafuerte (seccion base)", r["Mu_ctf"], "kg.m", "1.7 . M(Bpanel)", 0),
-        Valor("As_ctf", "Acero principal del contrafuerte (base)", r["As_ctf"], "cm2", "Mu/(phi.fy.ju.d)/cos(theta)", 2),
+        Valor("Mu_ctf", "Momento ultimo contrafuerte (fondo de losa)", r["Mu_ctf"], "kg.m", "1.7 . (M3 + V3.D)", 0),
+        Valor("As_ctf", "Acero principal del contrafuerte (fondo de losa)", r["As_ctf"], "cm2", "Mu/(phi.fy.ju.d)/cos(theta)", 2),
     ]
 
     diam_pulg = d["diam_estribo"] / 2.54
@@ -432,7 +448,7 @@ def calcular(d: dict) -> Resultado:
     if a_punt:
         armados.append(f"Puntera: {a_punt.texto} (a/s) - provee {a_punt.As_provisto:.2f} cm2/m "
                         f">= {r['As_punt']:.2f} requerido")
-    armados.append(f"Contrafuerte (seccion base, principal inclinado): As = {r['As_ctf']:.2f} cm2 "
+    armados.append(f"Contrafuerte (fondo de losa, principal inclinado): As = {r['As_ctf']:.2f} cm2 "
                     f"(As min = {r['As_min_ctf']:.2f} cm2)")
     for s in r["secciones_ctf"]:
         if s["estribos"]["necesita"]:
@@ -452,12 +468,10 @@ def calcular(d: dict) -> Resultado:
         "se sigue el criterio del ejemplo del libro (continuidad del acero hacia el contrafuerte)."
     )
     res.notas.append(
-        "Contrafuerte: la tabla original del libro incluye una 4ta fila en la misma seccion "
-        "base (h=2.40 m) con un momento mayor (M~290 tm, As~68.96 cm2) que esta seccion base "
-        f"(M~{r['Mu_ctf']/1.7:.0f} kg.m, As~{r['As_ctf']:.2f} cm2). No se pudo derivar esa 4ta "
-        "fila de las formulas disponibles (probablemente incluye un efecto adicional, p.ej. la "
-        "reaccion de la losa de la puntera sobre el contrafuerte) -- verificar contra el libro "
-        "si se requiere ese margen adicional."
+        "Contrafuerte: el voladizo continua hasta el fondo de la losa (H = Bpanel + D), no solo "
+        "hasta la base del fuste. El canto h ya no crece en ese tramo, pero el momento si sigue "
+        f"creciendo (M_fondo = M_base_fuste + V_base_fuste . D = {r['fondo_losa_ctf']['M']:.0f} kg.m); "
+        "por eso el armado principal se calcula en el fondo de la losa, no en la base del fuste."
     )
 
     return res
