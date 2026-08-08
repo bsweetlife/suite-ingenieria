@@ -105,18 +105,18 @@ def vista_inicio():
 # --------------------------------------------------------------------------- #
 #  Vista: Calculadora
 # --------------------------------------------------------------------------- #
-def _init_estado(campo):
+def _init_estado(campo, calc_id):
     """Inicializa el valor del campo en session_state una sola vez."""
-    kkey = f"in_{campo.clave}"
+    kkey = f"in_{calc_id}_{campo.clave}"
     if kkey not in st.session_state:
         st.session_state[kkey] = (int(campo.defecto) if campo.tipo == "entero"
                                   else campo.defecto if campo.tipo == "opcion"
                                   else float(campo.defecto))
 
 
-def _widget(campo):
+def _widget(campo, calc_id):
     etiqueta = f"{campo.etiqueta}" + (f"  [{campo.unidad}]" if campo.unidad else "")
-    kkey = f"in_{campo.clave}"
+    kkey = f"in_{calc_id}_{campo.clave}"
     comun = dict(help=campo.ayuda or None, key=kkey)
     if campo.tipo == "opcion":
         return st.selectbox(etiqueta, campo.opciones, **comun)
@@ -138,11 +138,11 @@ def _aplicar_suelo(calc: Calculadora):
     mat = st.session_state.get(f"suelo_{calc.id}")
     destino = getattr(calc, "guia_suelo_destino", "")
     if mat and mat in calc.guia_suelo and destino:
-        st.session_state[f"in_{destino}"] = float(calc.guia_suelo[mat])
+        st.session_state[f"in_{calc.id}_{destino}"] = float(calc.guia_suelo[mat])
 
 
 def _entradas_actuales(calc: Calculadora) -> dict:
-    return {c.clave: st.session_state.get(f"in_{c.clave}", c.defecto) for c in calc.campos}
+    return {c.clave: st.session_state.get(f"in_{calc.id}_{c.clave}", c.defecto) for c in calc.campos}
 
 
 def _aplicar_sugerencia(calc: Calculadora):
@@ -155,7 +155,7 @@ def _aplicar_sugerencia(calc: Calculadora):
             v = max(v, lo)
         if hi is not None:
             v = min(v, hi)
-        st.session_state[f"in_{k}"] = v
+        st.session_state[f"in_{calc.id}_{k}"] = v
 
 
 def vista_calculadora(calc: Calculadora):
@@ -171,7 +171,7 @@ def vista_calculadora(calc: Calculadora):
         st.subheader("Datos de entrada")
 
         for c in calc.campos:          # asegura valores en session_state
-            _init_estado(c)
+            _init_estado(c, calc.id)
 
         # Guia rapida de suelo (si la calculadora la declara): auto-rellena el campo
         if getattr(calc, "guia_suelo", None):
@@ -198,13 +198,13 @@ def vista_calculadora(calc: Calculadora):
                 cc = st.columns(2)
                 for i, campo in enumerate(normales):
                     with cc[i % 2]:
-                        entradas[campo.clave] = _widget(campo)
+                        entradas[campo.clave] = _widget(campo, calc.id)
             if avanzados:
                 with st.expander(f"⚙️ {grupo} (avanzado)"):
                     cc = st.columns(2)
                     for i, campo in enumerate(avanzados):
                         with cc[i % 2]:
-                            entradas[campo.clave] = _widget(campo)
+                            entradas[campo.clave] = _widget(campo, calc.id)
 
         # Dimensionamiento asistido: al final, cuando ya estan todos los datos
         if getattr(calc, "sugerir", None):
