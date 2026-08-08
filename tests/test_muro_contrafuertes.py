@@ -6,6 +6,10 @@ Los valores del libro estan redondeados en cada paso intermedio (calculo a mano)
 el motor calcula todo con precision completa, por eso la tolerancia es relativa
 (no exacta), salvo en los pocos valores que coinciden exactamente (R, Fr, pesos).
 
+Terminologia: "puntera" = lado con tierra + sobrecarga + contrafuerte (C=2.0 m,
+C/L=0.357); "talon" = lado sin tierra, junto al punto de momentos por vuelco
+(~1.2 m). Ver docstring de calculadoras/muro_contrafuertes.py.
+
 Ejecutar:   python -m pytest tests/ -v      (o)     python tests/test_muro_contrafuertes.py
 """
 import math
@@ -21,10 +25,13 @@ ENTRADA = dict(
     gs=1850, phi=30, c=0.088, beta=0, q=1200,
     gs2=2000, phi2=34, c2=0.4, sigma_adm=2.8, Dp_adop=1.2,
     fc=200, fy=4200, gc=2500,
-    B_adop=3.6, Bprima_adop=0.4, D_adop=0.6, puntera_adop=1.2, L_adop=5.6, t_adop=0.4,
-    talon_d_adop=50, puntera_d_adop=45, fuste_d_adop=30, h_ctf_base=2.40,
+    B_adop=3.6, Bprima_adop=0.4, D_adop=0.6, puntera_adop=2.0, L_adop=5.6,
+    t_adop=0.4, t_ctf_base=0.50,
+    talon_d_adop=50, puntera_d_adop=45, fuste_d_adop=30,
+    h_ctf_1=1.07, h_ctf_2=1.73, h_ctf_3=2.40,
     mu=0.1448, ju=0.90, phi_corte=0.85, phi_flexion=0.90,
     coef_tanphi_p=0.67, coef_c_p=0.6,
+    s_max_estribo=30.0, diam_estribo=1.5875, ramas_estribo=2,
 )
 
 # Valores del libro (algunos exactos, otros redondeados por el calculo a mano)
@@ -44,17 +51,12 @@ LIBRO_APROX = {
     "FS_desliz_sin": (1.55, 0.02),
     "FS_desliz_con": (2.72, 0.02),
     "e": (0.6, 0.05),
-    # NOTA: en el libro, los numeros de la seccion titulada "Talon" (V1=25320,
-    # M1=16.2tm, Mu=27.54tm) coinciden con la losa SIN tierra encima (la
-    # adyacente al punto I de momentos, que aqui se modela como "puntera" con
-    # terminologia estandar), y los de "Puntera" (Mu=44.7tm) coinciden con la
-    # losa que carga tierra+sobrecarga+contrafuerte (aqui "talon"). Ver
-    # resumen de la conversacion: el modulo usa terminologia estandar
-    # (puntera = lado sin tierra, talon = lado con tierra retenida).
-    "V1_punt": (25320, 0.02),
-    "M1_punt": (16200, 0.03),
-    "Mu_punt": (27540, 0.03),
-    "Mu_talon": (44700, 0.03),
+    # Talon (sin tierra) = numeros que el libro rotula "Talon" en la sec. 6.
+    "V1_talon": (25320, 0.02),
+    "M1_talon": (16200, 0.03),
+    "Mu_talon": (27540, 0.03),
+    # Puntera (con tierra) = numeros que el libro rotula "Puntera" en la sec. 6.
+    "Mu_punt": (44700, 0.03),
     "CL": (0.357, 0.01),
     "q0": (4563, 0.01),
     "q0L2": (143096, 0.01),
@@ -95,29 +97,41 @@ def test_verificaciones_de_estabilidad_cumplen():
     assert r["contacto_ok"]
 
 
-def test_contrafuerte_seccion_base():
-    """
-    La 'seccion 4' del libro (h=2.40 m, la mas cargada de las 4 que tabula)
-    da M=290 tm, Mu=493 tm, As=68.96 cm2 -- pero a una altura ligeramente
-    por debajo de la cima real de la cuna (no exactamente en la base, y=Bpanel).
-    Aqui se evalua la seccion en la base exacta (y=Bpanel), que es mas
-    conservadora (mayor momento) por construccion: se verifica que el As
-    resultante sea mayor que el del libro pero del mismo orden de magnitud
-    (no un valor arbitrario), y que la relacion As/cos(theta) este bien
-    aplicada comparando contra el As del libro evaluado con el Mu del libro.
-    """
+def test_fuste_gobierna_My0():
     r = _motor(ENTRADA)
-    # As usando el Mu *del libro* (493 tm) con el mismo theta/d que aca: debe
-    # reproducir el As del libro (68.96) dentro de tolerancia -- valida que
-    # la formula (As = Mu/(phi.fy.ju.d)/cos(theta)) esta bien planteada.
-    Mu_libro = 493000.0 * 100  # kg.m -> kg.cm
-    As_libro_recalc = Mu_libro / (0.90 * 4200 * 0.90 * r["d_ctf"]) / math.cos(r["theta_ctf"])
-    assert abs(As_libro_recalc - 68.96) < 1.5
+    assert r["clave_fuste_gob"] == "My0"
+    assert abs(r["Mu_fuste"] - 7078) < 7078 * 0.02
+    assert abs(r["d_min_fuste"] - 16) < 1.0
 
-    # El As en la base exacta debe ser mayor (mas conservador) pero del mismo
-    # orden que el del libro (no mas del doble).
-    assert r["As_ctf"] > 68.96
-    assert r["As_ctf"] < 2 * 68.96
+
+def test_contrafuerte_3_secciones():
+    """Las 3 secciones (y=Bpanel/3, 2Bpanel/3, Bpanel) usan el mismo recorte
+    por traccion z0 que el empuje activo global. Con h1=1.07, h2=1.73,
+    h3=2.40 (canto de cada seccion, del ejemplo), M/As/vu deben coincidir con
+    el libro dentro de ~2%: seccion1 M=3358 As=1.78, seccion2 M=56034
+    As=18.50, seccion3(base) M=233262 As=55.47, vu=2.9/11.73/17.51."""
+    r = _motor(ENTRADA)
+    secciones = r["secciones_ctf"]
+    assert len(secciones) == 3
+
+    M_libro = [3358, 56034, 233262]
+    As_libro = [1.78, 18.50, 55.47]
+    vu_libro = [2.9, 11.73, 17.51]
+    for i, s in enumerate(secciones):
+        assert abs(s["M"] - M_libro[i]) < M_libro[i] * 0.03, f"seccion {i+1} M"
+        assert abs(s["As"] - As_libro[i]) < max(0.3, As_libro[i] * 0.06), f"seccion {i+1} As"
+        assert abs(s["vu"] - vu_libro[i]) < max(0.05, vu_libro[i] * 0.02), f"seccion {i+1} vu"
+
+    # Nivel 1: sin estribos. Niveles 2 y 3: con estribos, s=30cm (capado por
+    # la separacion maxima practica adoptada, igual que en el libro).
+    assert not secciones[0]["estribos"]["necesita"]
+    assert secciones[1]["estribos"]["necesita"] and secciones[1]["estribos"]["s"] == 30.0
+    assert secciones[2]["estribos"]["necesita"] and secciones[2]["estribos"]["s"] == 30.0
+
+
+def test_As_min_contrafuerte():
+    r = _motor(ENTRADA)
+    assert abs(r["As_min_ctf"] - 28.8) < 1.0
 
 
 if __name__ == "__main__":
@@ -125,5 +139,7 @@ if __name__ == "__main__":
     test_valores_aproximan_al_libro()
     test_sigma_max_kgcm2()
     test_verificaciones_de_estabilidad_cumplen()
-    test_contrafuerte_seccion_base()
+    test_fuste_gobierna_My0()
+    test_contrafuerte_3_secciones()
+    test_As_min_contrafuerte()
     print("OK - el motor reproduce el Ejemplo 15.3 dentro de tolerancia.")

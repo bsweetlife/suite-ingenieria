@@ -167,6 +167,11 @@ def generar_pdf(calc: Calculadora, entradas: dict, res: Resultado,
             filas.append([v.etiqueta, f"{v.valor:,.{v.decimales}f}", v.unidad])
         E.append(_tabla(filas, [8 * cm, 4 * cm, 4 * cm]))
 
+    if getattr(res, "armado_texto", ""):
+        E.append(Spacer(1, 8))
+        E.append(Paragraph("Armado sugerido", ss["Seccion"]))
+        E.append(Paragraph(_s(res.armado_texto), ss["Normal"]))
+
     if res.notas:
         E.append(Spacer(1, 8))
         for n in res.notas:

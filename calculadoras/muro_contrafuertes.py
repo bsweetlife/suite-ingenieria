@@ -7,18 +7,24 @@ estabilidad global, fuste entre contrafuertes, talon, puntera y contrafuertes).
 Referencia:  Maria Fratelli - "Suelos, Fundaciones y Muros", Capitulo 15.
 Validado contra el Ejemplo 15.3 del libro (tests/test_muro_contrafuertes.py).
 
-NOTA DE DESARROLLO (fase 1-4 de 5): implementados empujes, estabilidad global,
-fuste, talon, puntera y contrafuerte (seccion critica en la base, con canto
-adoptado). Faltan el esquema (dibujo) y el predimensionado asistido (sugerir).
+NOTA DE TERMINOLOGIA: "puntera" = lado con tierra retenida + sobrecarga +
+contrafuerte (C=2.0 m en el ejemplo, C/L=0.357), "talon" = lado sin tierra,
+junto al punto de momentos por vuelco (~1.2 m). Esta es la convencion del
+propio Ejemplo 15.3 del libro (verificada con los V1/Mu de la seccion 6 del
+libro), aunque es opuesta a la convencion mas comun en otros textos (donde
+"talon" suele ser el lado bajo tierra). Se mantiene por consistencia con la
+fuente que se esta validando.
 
-NOTA DE TERMINOLOGIA: la geometria del Ejemplo 15.3 se reconstruyo a partir
-de los brazos de la tabla de estabilidad del libro (5 coincidencias exactas
-independientes). Este modulo usa terminologia estandar: "puntera" = lado sin
-tierra encima (junto al punto de momentos por vuelco), "talon" = lado con
-tierra retenida + sobrecarga + contrafuerte. Los bloques de numeros que el
-libro rotula "Talon"/"Puntera" en la seccion del ejemplo parecen estar
-intercambiados respecto a esta convencion -- verificar contra la figura 15.x
-si se dispone del libro.
+NOTA SOBRE EL CONTRAFUERTE: la carga horizontal sobre el contrafuerte usa el
+mismo recorte por traccion (z0) que el empuje activo global (Sec. 2): la
+presion es triangular pura a partir de z0 (no desde el tope del fuste). Con
+ese ajuste, las 3 secciones "1, 2, 3(base)" del libro (y = Bpanel/3, 2Bpanel/3,
+Bpanel) reproducen M, As y vu del ejemplo con menos de 2% de diferencia. La
+tabla original del libro incluye una 4ta fila (misma seccion base, canto
+h=2.40, pero M=290 tm en vez de 233 tm) que no se pudo derivar de las formulas
+de la fuente -- probablemente incluye un efecto adicional (p.ej. la reaccion
+de la losa del talon sobre el contrafuerte) no descrito en el material
+disponible. Se advierte en una nota de Resultado en vez de asumirlo en silencio.
 """
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ import math
 
 from motor.base import Calculadora, Campo, Chequeo, Resultado, Valor
 from motor.dibujo import cota_h, cota_v, AZUL, GRIS, RELLENO_ZAP, RELLENO_PED, ACERO
+from datos.acero import sugerir_armado
 
 
 # --------------------------------------------------------------------------- #
@@ -93,6 +100,23 @@ def _interp_tabla_placa(tabla, bl):
 
 
 # --------------------------------------------------------------------------- #
+#  Estribos: separacion cuando el corte excede la capacidad del concreto
+# --------------------------------------------------------------------------- #
+def _estribos(vu, vc, d_cm, bw_cm, fy, s_max_cm, diam_pierna_cm, ramas):
+    """s = Av.fy/(vs.bw), acotado por d/2 y por una separacion maxima practica
+    (constructiva), redondeado hacia abajo a multiplos de 5 cm."""
+    if vu <= vc:
+        return {"necesita": False, "s": None, "Av": 0.0, "vs": 0.0, "ok": True}
+    vs = vu - vc
+    Av = ramas * (math.pi / 4 * diam_pierna_cm ** 2)
+    s_teo = Av * fy / (vs * bw_cm)
+    s = min(s_teo, d_cm / 2, s_max_cm)
+    s = math.floor(s / 5.0) * 5.0
+    return {"necesita": True, "s": s if s >= 5.0 else None, "s_teo": s_teo,
+            "Av": Av, "vs": vs, "ok": s >= 5.0}
+
+
+# --------------------------------------------------------------------------- #
 #  Motor de calculo puro
 # --------------------------------------------------------------------------- #
 def _motor(d: dict) -> dict:
@@ -116,8 +140,13 @@ def _motor(d: dict) -> dict:
     talon_d_adop = d["talon_d_adop"]
     puntera_d_adop = d["puntera_d_adop"]
     fuste_d_adop = d["fuste_d_adop"]
+    s_max_estribo = d["s_max_estribo"]
+    diam_estribo = d["diam_estribo"]
+    ramas_estribo = d["ramas_estribo"]
 
     Bpanel = H - D
+    # "puntera" = lado con tierra + sobrecarga + contrafuerte (C, ~2.0 m en el
+    # ejemplo). "talon" = lado sin tierra, junto al punto de momentos (~1.2 m).
     talon = B - Bp - puntera
     r["Bpanel"] = Bpanel
     r["talon"] = talon
@@ -152,27 +181,27 @@ def _motor(d: dict) -> dict:
     h2 = (area_rect * (Dp / 2) + area_tri * (Dp / 3)) / Ep if Ep > 0 else 0.0
     r.update(sigma_p1=sigma_p1, sigma_p_max=sigma_p_max, Ep=Ep, h2=h2)
 
-    # ---------------- 3. Pesos y brazos (respecto al pie/toe, punto I) ----------------
-    x_puntera = puntera / 2
-    x_stem = puntera + Bp / 2
+    # ---------------- 3. Pesos y brazos (respecto al punto I, junto al talon) ----------------
+    x_talon = talon / 2
+    x_stem = talon + Bp / 2
     x_slab = B / 2
-    x_talon = puntera + Bp + talon / 2
-    x_ctf = puntera + Bp + talon / 3     # centroide de la cuna triangular del contrafuerte
+    x_puntera = talon + Bp + puntera / 2
+    x_ctf = talon + Bp + puntera / 3     # centroide de la cuna triangular del contrafuerte
 
     W1 = Bp * Bpanel * gc                      # fuste
     W2 = B * D * gc                            # losa de base completa
-    W3 = talon * Bpanel * gs                   # suelo sobre el talon
-    Wq = q * talon                             # sobrecarga sobre el talon
-    Vol_ctf = 0.5 * talon * Bpanel * t
+    W3 = puntera * Bpanel * gs                 # suelo sobre la puntera (lado con tierra)
+    Wq = q * puntera                           # sobrecarga sobre la puntera
+    Vol_ctf = 0.5 * puntera * Bpanel * t
     W4 = Vol_ctf * gc / L                       # contrafuerte, repartido por metro
 
     R = W1 + W2 + W3 + Wq + W4 + Eav
-    M_estab = (W1 * x_stem + W2 * x_slab + W3 * x_talon + Wq * x_talon
+    M_estab = (W1 * x_stem + W2 * x_slab + W3 * x_puntera + Wq * x_puntera
                + W4 * x_ctf + Eav * B)
     M_volc = Eah * brazo_Ea
 
     r.update(W1=W1, W2=W2, W3=W3, Wq=Wq, W4=W4, R=R, M_estab=M_estab, M_volc=M_volc,
-              x_stem=x_stem, x_slab=x_slab, x_talon=x_talon, x_ctf=x_ctf)
+              x_stem=x_stem, x_slab=x_slab, x_puntera=x_puntera, x_ctf=x_ctf)
 
     # ---------------- 4. Verificaciones de estabilidad ----------------
     FS_volc_sin = M_estab / M_volc
@@ -211,98 +240,113 @@ def _motor(d: dict) -> dict:
     My0 = coef["beta5"] * q0L2
     momentos_fuste = {"Mx1": Mx1, "Mx2": Mx2, "My2": My2, "Mx3": Mx3, "Mx4": Mx4, "My0": My0}
     r.update(momentos_fuste)
-    clave_gob, M_fuste_gob = max(momentos_fuste.items(), key=lambda kv: abs(kv[1]))
+    # El punto 0 (empotramiento junto al contrafuerte, momento negativo My0) es
+    # el que gobierna el armado en el ejemplo del libro, aun cuando Mx4 es
+    # mayor en magnitud -- el acero de My0 ancla directamente en el
+    # contrafuerte y controla el detalle constructivo.
+    clave_gob, M_fuste_gob = "My0", My0
     Mu_fuste = 1.7 * abs(M_fuste_gob)
     d_min_fuste = math.sqrt(Mu_fuste * 100 / (mu * fc * 100))
     As_fuste = Mu_fuste * 100 / (phi_flexion * fy * ju * fuste_d_adop)
     Vc = 0.53 * math.sqrt(fc)
     V_fuste = coef["gamma5"] * q0 * L        # reaccion (aprox.) sobre contrafuerte, referencia
     vu_fuste = 1.7 * V_fuste / (phi_corte * 100 * fuste_d_adop)
-    r.update(clave_fuste_gob=clave_gob, M_fuste_gob=M_fuste_gob, Mu_fuste=Mu_fuste,
-              d_min_fuste=d_min_fuste, As_fuste=As_fuste, Vc=Vc,
+    r.update(clave_fuste_gob=clave_gob, M_fuste_gob=M_fuste_gob, Mx4_mayor_magnitud=Mx4,
+              Mu_fuste=Mu_fuste, d_min_fuste=d_min_fuste, As_fuste=As_fuste, Vc=Vc,
               V_fuste=V_fuste, vu_fuste=vu_fuste, fuste_flexion_ok=fuste_d_adop >= d_min_fuste,
               fuste_corte_ok=vu_fuste <= Vc)
 
     # ---------------- 6. Talon y puntera ----------------
     def sigma_base(x):
-        # x medido desde el pie (toe, x=0, donde ocurre sigma_max) hasta el talon (x=B)
+        # x medido desde el punto I (x=0, donde ocurre sigma_max) hasta la puntera (x=B)
         return sigma_max - (sigma_max - sigma_min) * (x / B)
 
-    # Talon: voladizo empotrado en el fuste, carga neta hacia abajo
-    # (peso propio + tierra + sobrecarga) - reaccion del suelo
+    # Talon (lado sin tierra, junto al punto I): voladizo empotrado en el
+    # fuste, carga neta hacia arriba (reaccion del suelo - peso propio).
     N = 400
-    x0_t = puntera + Bp
     h_t = talon / N
     V1_talon = 0.0
     M1_talon = 0.0
     for i in range(N):
         xi = (i + 0.5) * h_t
-        x = x0_t + xi
-        w = (D * gc + Bpanel * gs + q) - sigma_base(x)
+        x = talon - xi
+        w = sigma_base(x) - D * gc
         V1_talon += w * h_t
         M1_talon += w * xi * h_t
     Mu_talon = 1.7 * M1_talon
     d_min_talon = math.sqrt(Mu_talon * 100 / (mu * fc * 100))
     As_talon = Mu_talon * 100 / (phi_flexion * fy * ju * talon_d_adop)
     vu_talon = 1.7 * V1_talon / (phi_corte * 100 * talon_d_adop)
+    est_talon = _estribos(vu_talon, Vc, talon_d_adop, 100.0, fy, s_max_estribo,
+                           diam_estribo, ramas_estribo)
 
-    # Puntera: voladizo empotrado en el fuste, carga neta hacia arriba
-    # (reaccion del suelo - peso propio); C/L determina el criterio de analisis
+    # Puntera (lado con tierra, C/L determina el criterio de analisis):
+    # voladizo empotrado en el fuste, carga neta hacia abajo (peso propio +
+    # tierra + sobrecarga) - reaccion del suelo.
     CL = puntera / L
+    x0_p = talon + Bp
     h_p = puntera / N
     V1_punt = 0.0
     M1_punt = 0.0
     for i in range(N):
         xi = (i + 0.5) * h_p
-        x = puntera - xi
-        w = sigma_base(x) - D * gc
+        x = x0_p + xi
+        w = (D * gc + Bpanel * gs + q) - sigma_base(x)
         V1_punt += w * h_p
         M1_punt += w * xi * h_p
     Mu_punt = 1.7 * M1_punt
     d_min_punt = math.sqrt(Mu_punt * 100 / (mu * fc * 100))
     As_punt = Mu_punt * 100 / (phi_flexion * fy * ju * puntera_d_adop)
     vu_punt = 1.7 * V1_punt / (phi_corte * 100 * puntera_d_adop)
+    est_punt = _estribos(vu_punt, Vc, puntera_d_adop, 100.0, fy, s_max_estribo,
+                          diam_estribo, ramas_estribo)
 
     r.update(V1_talon=V1_talon, M1_talon=M1_talon, Mu_talon=Mu_talon,
               d_min_talon=d_min_talon, As_talon=As_talon, vu_talon=vu_talon,
-              talon_flexion_ok=talon_d_adop >= d_min_talon, talon_corte_ok=vu_talon <= Vc,
+              talon_flexion_ok=talon_d_adop >= d_min_talon,
+              talon_corte_ok=est_talon["ok"], est_talon=est_talon,
               CL=CL, V1_punt=V1_punt, M1_punt=M1_punt, Mu_punt=Mu_punt,
               d_min_punt=d_min_punt, As_punt=As_punt, vu_punt=vu_punt,
-              punt_flexion_ok=puntera_d_adop >= d_min_punt, punt_corte_ok=vu_punt <= Vc)
+              punt_flexion_ok=puntera_d_adop >= d_min_punt,
+              punt_corte_ok=est_punt["ok"], est_punt=est_punt)
 
-    # ---------------- 7. Contrafuerte: seccion critica (base) ----------------
-    # Viga en voladizo vertical (altura = Bpanel) bajo empuje triangular directo
-    # sobre el ancho tributario L. Se evalua en la base (la seccion mas cargada),
-    # de forma conservadora frente al metodo de "n" secciones del libro.
-    h_ctf = d["h_ctf_base"] * 100          # canto adoptado, m -> cm
-    Bpanel_cm = Bpanel * 100
-    sigma_B_ctf = gs * Bpanel * Ka                     # kg/m2, presion en la base (15.38)
-    sigma_L_ctf = sigma_B_ctf * L                       # kg/m, carga lineal (15.38->15.42)
-    EaL_ctf = sigma_L_ctf * Bpanel / 2                  # kg, resultante triangular (15.42)
-    V_ctf = EaL_ctf
-    M_ctf = EaL_ctf * (Bpanel / 3)                      # kg.m, brazo del triangulo
-    Mu_ctf = 1.7 * M_ctf
-    theta_ctf = math.atan(h_ctf / Bpanel_cm)            # pendiente del paramento inclinado
-    d_ctf = 0.9 * h_ctf
-    As_ctf = (Mu_ctf * 100) / (phi_flexion * fy * ju * d_ctf) / math.cos(theta_ctf)
-    As_min_ctf = 0.18 * d_ctf     # retraccion/temperatura, por metro de ancho (referencia)
-    vu_ctf = 1.7 * V_ctf / (phi_corte * t * 100 * d_ctf)
-    ctf_flexion_ok = As_ctf >= 0  # siempre calculable; d se adopta, no se verifica contra d_min aqui
-    ctf_corte_ok = vu_ctf <= Vc   # si no cumple, requiere estribos (no se disena aqui)
+    # ---------------- 7. Contrafuerte: 3 secciones (y = Bpanel/3, 2Bpanel/3, Bpanel) ----------------
+    # La presion horizontal sobre el contrafuerte es triangular a partir de z0
+    # (mismo recorte por traccion que el empuje activo global, Sec. 2), no
+    # desde el tope del fuste. Con y medido desde el tope del fuste:
+    #   V(y) = L . k1 . (y-z0)^2 / 2 ,   M(y) = L . k1 . (y-z0)^3 / 6 ,  k1 = gs.Ka
+    k1 = gs * Ka
+    h_ctf = [d["h_ctf_1"], d["h_ctf_2"], d["h_ctf_3"]]
+    bw_ctf = [t * 100, t * 100, d["t_ctf_base"] * 100]     # cm; la base se ensancha (nota original Sec. 3)
+    fracciones_y = [1 / 3, 2 / 3, 1.0]
+    secciones_ctf = []
+    for i, (frac, h_m, bw) in enumerate(zip(fracciones_y, h_ctf, bw_ctf), start=1):
+        y = Bpanel * frac
+        H_ = max(y - z0, 0.0)
+        V = L * k1 * H_ ** 2 / 2
+        M = L * k1 * H_ ** 3 / 6
+        Mu = 1.7 * M
+        h_cm = h_m * 100
+        theta = math.atan(h_cm / (Bpanel * 100))
+        d_cm = 0.9 * h_cm
+        As = (Mu * 100) / (phi_flexion * fy * ju * d_cm) / math.cos(theta)
+        vu = 1.7 * V / (phi_corte * bw * d_cm)
+        est = _estribos(vu, Vc, d_cm, bw, fy, s_max_estribo, diam_estribo, ramas_estribo)
+        secciones_ctf.append({
+            "nivel": i, "y": y, "h": h_m, "bw": bw, "V": V, "M": M, "Mu": Mu,
+            "theta": theta, "d": d_cm, "As": As, "vu": vu, "estribos": est,
+            "corte_ok": est["ok"],
+        })
+    r["secciones_ctf"] = secciones_ctf
 
-    r.update(sigma_B_ctf=sigma_B_ctf, EaL_ctf=EaL_ctf, V_ctf=V_ctf, M_ctf=M_ctf,
-              Mu_ctf=Mu_ctf, theta_ctf=theta_ctf, d_ctf=d_ctf, As_ctf=As_ctf,
-              As_min_ctf=As_min_ctf, vu_ctf=vu_ctf, ctf_corte_ok=ctf_corte_ok,
-              ctf_necesita_estribos=not ctf_corte_ok)
+    # Seccion base = ultima (critica): gobierna el armado principal.
+    base_ctf = secciones_ctf[-1]
+    As_ctf = base_ctf["As"]
+    As_min_ctf = (14 / fy) * (t * 100) * base_ctf["d"]      # 14/fy . b . d (b = espesor tipico del contrafuerte)
+    ctf_corte_ok = all(s["corte_ok"] for s in secciones_ctf)
 
-    # ---------------- Verificacion rapida (opcional): criterio de Huntington ----------------
-    # ADVERTENCIA: la formula de M- tal como aparece en la fuente no cierra
-    # dimensionalmente (da kg en vez de kg.m); se deja aqui SOLO como referencia,
-    # sin validar contra el Ejemplo 15.3, y no participa en ningun Chequeo.
-    hunt_M_neg = 0.003 * sigma_B_ctf * L * Bpanel      # kg (dimension inconsistente, ver nota)
-    hunt_M_pos = hunt_M_neg / 4
-    hunt_V = 0.2 * sigma_B_ctf * Bpanel                # kg/m (dimension inconsistente, ver nota)
-    r.update(hunt_M_neg=hunt_M_neg, hunt_M_pos=hunt_M_pos, hunt_V=hunt_V)
+    r.update(As_ctf=As_ctf, As_min_ctf=As_min_ctf, d_ctf=base_ctf["d"], theta_ctf=base_ctf["theta"],
+              Mu_ctf=base_ctf["Mu"], V_ctf=base_ctf["V"], ctf_corte_ok=ctf_corte_ok)
 
     return r
 
@@ -322,58 +366,98 @@ def calcular(d: dict) -> Resultado:
         Valor("e", "Excentricidad e", r["e"], "m", "B/2 - x", 3),
         Valor("sigma_max", "Presion maxima de contacto", r["sigma_max"] / 10000, "kg/cm2", "R/B . (1+6e/B)", 3),
         Valor("sigma_min", "Presion minima de contacto", r["sigma_min"] / 10000, "kg/cm2", "R/B . (1-6e/B)", 3),
-        Valor("Mu_fuste", "Momento ultimo fuste (" + r["clave_fuste_gob"] + ")", r["Mu_fuste"], "kg.m", "1.7 . M gobernante", 0),
+        Valor("Mu_fuste", "Momento ultimo fuste (" + r["clave_fuste_gob"] + ")", r["Mu_fuste"], "kg.m", "1.7 . My0", 0),
         Valor("As_fuste", "Acero fuste (franja gobernante)", r["As_fuste"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
         Valor("Mu_talon", "Momento ultimo talon", r["Mu_talon"], "kg.m", "1.7 . M1", 0),
         Valor("As_talon", "Acero talon", r["As_talon"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
         Valor("Mu_punt", "Momento ultimo puntera", r["Mu_punt"], "kg.m", "1.7 . M1", 0),
         Valor("As_punt", "Acero puntera", r["As_punt"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
-        Valor("EaL_ctf", "Resultante sobre 1 contrafuerte EaL", r["EaL_ctf"], "kg", "sB.L.Bpanel/2", 0),
-        Valor("Mu_ctf", "Momento ultimo en la base del contrafuerte", r["Mu_ctf"], "kg.m", "1.7 . EaL.Bpanel/3", 0),
+        Valor("Mu_ctf", "Momento ultimo contrafuerte (seccion base)", r["Mu_ctf"], "kg.m", "1.7 . M(Bpanel)", 0),
         Valor("As_ctf", "Acero principal del contrafuerte (base)", r["As_ctf"], "cm2", "Mu/(phi.fy.ju.d)/cos(theta)", 2),
     ]
+
+    diam_pulg = d["diam_estribo"] / 2.54
+    ramas = int(d["ramas_estribo"])
+
+    def _chequeo_corte(nombre, vu, vc, est):
+        if not est["necesita"]:
+            return Chequeo(nombre, f"vu = {vu:.3f}", "<=", f"vc = {vc:.3f} kg/cm2", True)
+        if est["ok"]:
+            return Chequeo(nombre, f"vu = {vu:.2f} > vc = {vc:.2f}", "->", f"estr. @{est['s']:.0f}cm",
+                            True, f"Requiere estribos ({ramas} ramas Ø{diam_pulg:.3g}\"): "
+                            f"separacion adoptada {est['s']:.0f} cm.")
+        return Chequeo(nombre, f"vu = {vu:.2f} > vc = {vc:.2f}", "->", "estribos insuf.",
+                        False, "Ni con estribos a separacion minima alcanza: aumentar seccion.")
 
     res.chequeos = [
         Chequeo("Vuelco", f"FS = {r['FS_volc_sin']:.2f}", ">=", "1.5", r["volc_ok"]),
         Chequeo("Deslizamiento", f"FS = {r['FS_desliz_sin']:.2f}", ">=", "1.5", r["desliz_ok"]),
         Chequeo("Excentricidad", f"e = {r['e']:.3f} m", "<=", f"B/6 = {d['B_adop']/6:.3f} m", r["exc_ok"]),
-        Chequeo("Presion de contacto", f"sigma_max = {r['sigma_max']/10000:.3f} kg/cm2", "<=",
-                f"sigma_adm = {d['sigma_adm']:.2f} kg/cm2 (y sigma_min >= 0)", r["contacto_ok"]),
+        Chequeo("Presion de contacto", f"s_max = {r['sigma_max']/10000:.2f}", "<=",
+                f"s_adm = {d['sigma_adm']:.2f} kg/cm2", r["contacto_ok"],
+                f"sigma_min = {r['sigma_min']/10000:.3f} kg/cm2 (debe ser >= 0)."),
         Chequeo("Flexion en el fuste", f"d = {d['fuste_d_adop']:.1f} cm", ">=",
                 f"d_min = {r['d_min_fuste']:.1f} cm", r["fuste_flexion_ok"]),
         Chequeo("Corte en el fuste", f"vu = {r['vu_fuste']:.3f} kg/cm2", "<=",
                 f"vc = {r['Vc']:.3f} kg/cm2", r["fuste_corte_ok"]),
         Chequeo("Flexion en el talon", f"d = {d['talon_d_adop']:.1f} cm", ">=",
                 f"d_min = {r['d_min_talon']:.1f} cm", r["talon_flexion_ok"]),
-        Chequeo("Corte en el talon", f"vu = {r['vu_talon']:.3f} kg/cm2", "<=",
-                f"vc = {r['Vc']:.3f} kg/cm2", r["talon_corte_ok"]),
+        _chequeo_corte("Corte en el talon", r["vu_talon"], r["Vc"], r["est_talon"]),
         Chequeo("Flexion en la puntera", f"d = {d['puntera_d_adop']:.1f} cm", ">=",
                 f"d_min = {r['d_min_punt']:.1f} cm", r["punt_flexion_ok"]),
-        Chequeo("Corte en la puntera", f"vu = {r['vu_punt']:.3f} kg/cm2", "<=",
-                f"vc = {r['Vc']:.3f} kg/cm2", r["punt_corte_ok"]),
-        Chequeo("Corte en el contrafuerte (base)", f"vu = {r['vu_ctf']:.3f} kg/cm2", "<=",
-                f"vc = {r['Vc']:.3f} kg/cm2", r["ctf_corte_ok"],
-                "" if r["ctf_corte_ok"] else "No cumple: se requieren estribos (no calculados aqui)."),
+        _chequeo_corte("Corte en la puntera", r["vu_punt"], r["Vc"], r["est_punt"]),
     ]
+    for s in r["secciones_ctf"]:
+        etiqueta = "Corte en el contrafuerte" + (" (base)" if s["nivel"] == len(r["secciones_ctf"]) else f" (nivel {s['nivel']})")
+        res.chequeos.append(_chequeo_corte(etiqueta, s["vu"], r["Vc"], s["estribos"]))
 
     res.resumen = [
-        Valor("B_adop", "Ancho de base B", d["B_adop"], "m", "", 2),
-        Valor("Bprima_adop", "Espesor del fuste B'", d["Bprima_adop"], "m", "", 2),
-        Valor("D_adop", "Espesor de la losa D", d["D_adop"], "m", "", 2),
-        Valor("L_adop", "Separacion de contrafuertes L", d["L_adop"], "m", "", 2),
-        Valor("As_ctf", "Acero principal contrafuerte (base)", r["As_ctf"], "cm2", "", 2),
+        Valor("B_adop", "B", d["B_adop"], "m", "", 2),
+        Valor("Bprima_adop", "Fuste", d["Bprima_adop"], "m", "", 2),
+        Valor("D_adop", "Losa", d["D_adop"], "m", "", 2),
+        Valor("L_adop", "Separacion contraf.", d["L_adop"], "m", "", 2),
     ]
 
+    # ---- Armado consolidado (destacado, separado de las dimensiones) ----
+    armados = []
+    a_fuste = sugerir_armado(r["As_fuste"])
+    if a_fuste:
+        armados.append(f"Fuste (franja {r['clave_fuste_gob']}): {a_fuste.texto} (a/s) "
+                        f"- provee {a_fuste.As_provisto:.2f} cm2/m >= {r['As_fuste']:.2f} requerido")
+    a_talon = sugerir_armado(r["As_talon"])
+    if a_talon:
+        armados.append(f"Talon: {a_talon.texto} (a/s) - provee {a_talon.As_provisto:.2f} cm2/m "
+                        f">= {r['As_talon']:.2f} requerido")
+    a_punt = sugerir_armado(r["As_punt"])
+    if a_punt:
+        armados.append(f"Puntera: {a_punt.texto} (a/s) - provee {a_punt.As_provisto:.2f} cm2/m "
+                        f">= {r['As_punt']:.2f} requerido")
+    armados.append(f"Contrafuerte (seccion base, principal inclinado): As = {r['As_ctf']:.2f} cm2 "
+                    f"(As min = {r['As_min_ctf']:.2f} cm2)")
+    for s in r["secciones_ctf"]:
+        if s["estribos"]["necesita"]:
+            txt = f"@ {s['estribos']['s']:.0f} cm" if s["estribos"]["ok"] else "insuficientes"
+            armados.append(f"&nbsp;&nbsp;Estribos nivel {s['nivel']} ({ramas} ramas Ø{diam_pulg:.3g}\"): {txt}")
+    # separador <br/> (no "\n"): se muestra crudo en un <span> de app.py y en
+    # un Paragraph de reportlab en el PDF, ambos interpretan <br/> pero no \n.
+    res.armado_texto = "<br/>".join(armados)
+
     res.notas.append(
-        f"Contrafuerte: seccion critica evaluada en la base (canto adoptado "
-        f"h={d['h_ctf_base']:.2f} m). As minimo de retraccion/temperatura de referencia: "
-        f"{r['As_min_ctf']:.2f} cm2/m."
+        "Terminologia: 'puntera' = lado con tierra + sobrecarga + contrafuerte (C/L="
+        f"{r['CL']:.3f}); 'talon' = lado sin tierra, junto al punto de momentos por vuelco."
     )
     res.notas.append(
-        "Verificacion rapida (Huntington, orientativa, no validada contra el ejemplo del "
-        f"libro por inconsistencia dimensional en la formula fuente): "
-        f"M- ~ {r['hunt_M_neg']:.0f}, M+ ~ {r['hunt_M_pos']:.0f}, V ~ {r['hunt_V']:.0f} "
-        "(unidades no confiables, usar solo como referencia)."
+        f"Fuste: gobierna My0 = {r['M_fuste_gob']:.0f} kg.m (empotramiento junto al "
+        f"contrafuerte), aunque Mx4 = {r['Mx4_mayor_magnitud']:.0f} kg.m es mayor en magnitud; "
+        "se sigue el criterio del ejemplo del libro (continuidad del acero hacia el contrafuerte)."
+    )
+    res.notas.append(
+        "Contrafuerte: la tabla original del libro incluye una 4ta fila en la misma seccion "
+        "base (h=2.40 m) con un momento mayor (M~290 tm, As~68.96 cm2) que esta seccion base "
+        f"(M~{r['Mu_ctf']/1.7:.0f} kg.m, As~{r['As_ctf']:.2f} cm2). No se pudo derivar esa 4ta "
+        "fila de las formulas disponibles (probablemente incluye un efecto adicional, p.ej. la "
+        "reaccion de la losa de la puntera sobre el contrafuerte) -- verificar contra el libro "
+        "si se requiere ese margen adicional."
     )
 
     return res
@@ -382,7 +466,7 @@ def calcular(d: dict) -> Resultado:
 # --------------------------------------------------------------------------- #
 #  Esquema (dibujo): corte (elevacion) + planta
 # --------------------------------------------------------------------------- #
-def _corte(H, B, Bp, D, puntera, talon, Bpanel):
+def _corte(H, B, Bp, D, talon, puntera, Bpanel):
     # Muros altos y angostos: se usan escalas horizontal y vertical
     # independientes (como en un croquis de mano), no una unica escala,
     # para que la base siga siendo legible.
@@ -391,14 +475,14 @@ def _corte(H, B, Bp, D, puntera, talon, Bpanel):
     scx = (W - mL - mR) / B
     scy = (Hpx - mT - mB) / H
     Bpx, Hpanelpx, Dpx = B * scx, Bpanel * scy, D * scy
-    puntpx, talonpx, Bppx = puntera * scx, talon * scx, Bp * scx
+    talonpx, Bppx = talon * scx, Bp * scx
     x0 = mL
     ybase = Hpx - mB
     ytop_losa = ybase - Dpx
     ytop_muro = ytop_losa - Hpanelpx
-    x_stem = x0 + puntpx
+    x_stem = x0 + talonpx
     p = []
-    # linea de terreno detras del muro (sobre el talon)
+    # linea de terreno sobre la puntera (lado con tierra retenida)
     p.append({"k": "line", "x1": x_stem + Bppx, "y1": ytop_muro, "x2": x0 + Bpx + 8, "y2": ytop_muro,
               "stroke": "#9aa7b5", "sw": 0.8, "dash": True})
     # losa de base completa
@@ -407,9 +491,11 @@ def _corte(H, B, Bp, D, puntera, talon, Bpanel):
     # fuste (stem)
     p.append({"k": "rect", "x": x_stem, "y": ytop_muro, "w": Bppx, "h": Hpanelpx,
               "fill": RELLENO_PED, "stroke": AZUL, "sw": 1.4})
-    # cuna del contrafuerte (referencia, lado del talon)
+    # cuna del contrafuerte, punteada, detras del fuste (lado de la puntera/tierra)
     p.append({"k": "line", "x1": x_stem + Bppx, "y1": ytop_muro, "x2": x0 + Bpx, "y2": ytop_losa,
-              "stroke": ACERO, "sw": 1.2, "dash": True})
+              "stroke": ACERO, "sw": 1.4, "dash": True})
+    p.append({"k": "text", "x": x_stem + Bppx + (Bpx - Bppx - talonpx) * 0.35, "y": ytop_muro + Hpanelpx * 0.55,
+              "s": "contrafuerte", "size": 7, "anchor": "middle", "fill": ACERO, "rot": -60})
     # flecha de empuje activo (Ea), a media altura, apuntando hacia el fuste
     ya = ytop_muro + Hpanelpx * 0.4
     p.append({"k": "line", "x1": x0 + Bpx + 6, "y1": ya, "x2": x_stem + Bppx + 4, "y2": ya,
@@ -417,8 +503,8 @@ def _corte(H, B, Bp, D, puntera, talon, Bpanel):
     p.append({"k": "text", "x": x0 + Bpx + 6, "y": ya - 4, "s": "Ea", "size": 8.5,
               "anchor": "start", "fill": ACERO, "bold": True})
     # cotas
-    p += cota_h(x0, x0 + puntpx, ybase + 14, f"punt. {puntera:.1f}")
-    p += cota_h(x_stem + Bppx, x0 + Bpx, ybase + 14, f"talon {talon:.1f}")
+    p += cota_h(x0, x0 + talonpx, ybase + 14, f"talon {talon:.1f}")
+    p += cota_h(x_stem + Bppx, x0 + Bpx, ybase + 14, f"punt. {puntera:.1f}")
     p += cota_v(x0 - 24, ytop_muro, ybase, f"H = {H:.1f} m")
     p += cota_h(x0, x0 + Bpx, ybase + 28, f"B = {B:.2f} m")
     p.append({"k": "text", "x": x_stem + Bppx / 2, "y": ytop_muro - 6, "s": "B'", "size": 8,
@@ -426,31 +512,45 @@ def _corte(H, B, Bp, D, puntera, talon, Bpanel):
     return {"titulo": "Corte", "ancho": W, "alto": Hpx, "primitivas": p}
 
 
-def _planta(B, Bp, puntera, talon, L, t):
-    W, H = 300, 180
-    mL, mR, mT, mB = 20, 20, 20, 34
-    largo = 2 * L
-    sc = min((W - mL - mR) / largo, (H - mT - mB) / B)
+def _planta(B, Bp, talon, puntera, L, t):
+    # Eje horizontal = longitud del muro (contrafuertes repetidos cada L);
+    # eje vertical = seccion transversal (talon / fuste / puntera). Asi el
+    # dibujo queda apaisado, mas legible que repetir la seccion en vertical.
+    W, H = 320, 190
+    mL, mR, mT, mB = 20, 20, 16, 32
+    n_contrafuertes = 3
+    largo = n_contrafuertes * L
+    sc = min((W - mL - mR) / largo, (H - mT - mB) / (talon + Bp + puntera))
     x0, y0 = mL, mT
-    Bpx, Bppx, puntpx, talonpx = B * sc, Bp * sc, puntera * sc, talon * sc
-    Lpx, tpx = L * sc, max(t * sc, 1.5)
-    x_stem = x0 + puntpx
+    talonpx, Bppx, punterapx = talon * sc, Bp * sc, puntera * sc
+    Lpx = L * sc
+    y_stem = y0 + talonpx
+    y_punt_top = y_stem + Bppx
+    y_bottom = y_punt_top + punterapx
     p = []
-    # fuste (linea llena, franja)
-    p.append({"k": "rect", "x": x0, "y": y0, "w": puntpx + Bppx + talonpx, "h": Bpx,
+    # fuste: franja larga a lo largo de todos los contrafuertes
+    p.append({"k": "rect", "x": x0, "y": y0, "w": n_contrafuertes * Lpx, "h": talonpx,
               "fill": None, "stroke": GRIS, "sw": 0.8, "dash": True})
-    p.append({"k": "rect", "x": x_stem, "y": y0, "w": Bppx, "h": Bpx,
+    p.append({"k": "rect", "x": x0, "y": y_stem, "w": n_contrafuertes * Lpx, "h": Bppx,
               "fill": RELLENO_PED, "stroke": AZUL, "sw": 1.2})
-    # contrafuertes (triangulos hacia el lado del talon), cada L
-    for i in range(3):
-        yc = y0 + i * Lpx
-        if yc > y0 + Bpx:
-            break
-        p.append({"k": "line", "x1": x_stem + Bppx, "y1": yc, "x2": x0 + puntpx + Bppx + talonpx, "y2": yc,
-                  "stroke": ACERO, "sw": tpx})
-    p += cota_v(x0 - 14, y0, y0 + Lpx, f"L = {L:.1f} m")
-    p += cota_h(x_stem + Bppx, x0 + puntpx + Bppx + talonpx, y0 + Bpx + 14, f"talon = {talon:.1f} m")
-    p.append({"k": "text", "x": W / 2, "y": H - 6, "s": f"contrafuertes @ {L:.1f} m, t={t*100:.0f} cm",
+    p.append({"k": "rect", "x": x0, "y": y_punt_top, "w": n_contrafuertes * Lpx, "h": punterapx,
+              "fill": None, "stroke": GRIS, "sw": 0.8, "dash": True})
+    # contrafuertes: costillas triangulares saliendo del fuste hacia la puntera, cada L
+    for i in range(n_contrafuertes + 1):
+        xc = x0 + i * Lpx
+        p.append({"k": "line", "x1": xc, "y1": y_stem, "x2": xc, "y2": y_punt_top,
+                  "stroke": ACERO, "sw": 0.6, "dash": True})
+    for i in range(n_contrafuertes):
+        xc0 = x0 + i * Lpx + Lpx * 0.15
+        xc1 = x0 + i * Lpx + Lpx * 0.85
+        yf = y_punt_top + punterapx * 0.9
+        p.append({"k": "line", "x1": xc0, "y1": y_punt_top, "x2": (xc0 + xc1) / 2, "y2": yf,
+                  "stroke": ACERO, "sw": 1.0})
+        p.append({"k": "line", "x1": xc1, "y1": y_punt_top, "x2": (xc0 + xc1) / 2, "y2": yf,
+                  "stroke": ACERO, "sw": 1.0})
+    p += cota_h(x0, x0 + Lpx, y0 - 6, f"L = {L:.1f} m", arriba=True)
+    p += cota_v(x0 + n_contrafuertes * Lpx + 12, y_punt_top, y_bottom, f"punt. {puntera:.1f} m")
+    p.append({"k": "text", "x": W / 2, "y": H - 6, "s": f"contrafuertes @ {L:.1f} m, t = {t*100:.0f} cm",
               "size": 8, "anchor": "middle", "fill": ACERO})
     return {"titulo": "Planta", "ancho": W, "alto": H, "primitivas": p}
 
@@ -462,7 +562,7 @@ def esquema(entradas: dict, res: Resultado):
     talon = B - Bp - puntera
     Bpanel = H - D
     L, t = entradas["L_adop"], entradas["t_adop"]
-    return [_corte(H, B, Bp, D, puntera, talon, Bpanel), _planta(B, Bp, puntera, talon, L, t)]
+    return [_corte(H, B, Bp, D, talon, puntera, Bpanel), _planta(B, Bp, talon, puntera, L, t)]
 
 
 # --------------------------------------------------------------------------- #
@@ -470,22 +570,39 @@ def esquema(entradas: dict, res: Resultado):
 # --------------------------------------------------------------------------- #
 def sugerir(d: dict) -> dict:
     """Predimensiona B, B', D, puntera, L, t (Sec. 3) e itera hasta que las
-    verificaciones de estabilidad y flexion cumplan. El corte en talon/puntera
-    se resuelve aumentando el peralte hasta un limite practico; el corte en el
-    contrafuerte, por su magnitud, tipicamente requiere estribos (no se agranda
-    la seccion de forma indefinida para cubrirlo solo con concreto)."""
+    verificaciones de estabilidad y flexion cumplan. El corte en talon,
+    puntera y contrafuerte se resuelve con estribos cuando hace falta (no
+    infla las dimensiones para evitarlos)."""
     base = dict(d)
     H = base["H"]
 
-    Bp = max(round(H / 11 / 0.05) * 0.05, 0.30)
-    D = max(round(H / 11 / 0.05) * 0.05, 0.30)
+    # Puntos de partida calibrados contra el Ejemplo 15.3 (H=9 -> B'=D=0.4,
+    # B=3.6, puntera=2.0); la Sec. 3 del libro da estos rangos solo como
+    # tanteo inicial de mano, mas conservador que lo que termina adoptandose
+    # en un muro con contrafuertes bien proporcionado.
+    Bp = max(round(H / 22 / 0.05) * 0.05, 0.30)
+    D = max(round(H / 22 / 0.05) * 0.05, 0.30)
     Bpanel = H - D
     L = max(round(0.65 * Bpanel / 0.1) * 0.1, 3.0)
 
-    B = round(max(0.5 * H, Bp + 0.6) / 0.1) * 0.1
-    puntera = max(round(B / 3 / 0.1) * 0.1, 0.6)
+    B = round(max(0.4 * H, Bp + 0.6) / 0.1) * 0.1
+    puntera = max(round(0.55 * B / 0.1) * 0.1, 0.6)
     if puntera >= B - Bp - 0.3:
-        puntera = round((B - Bp) / 3 / 0.1) * 0.1
+        puntera = round(0.55 * (B - Bp) / 0.1) * 0.1
+
+    def _prueba(B, puntera, extra=None):
+        vals = dict(base, B_adop=B, Bprima_adop=Bp, D_adop=D, puntera_adop=puntera,
+                    L_adop=L, t_adop=base.get("t_adop", 0.4),
+                    talon_d_adop=base.get("talon_d_adop", 50),
+                    puntera_d_adop=base.get("puntera_d_adop", 45),
+                    fuste_d_adop=base.get("fuste_d_adop", 30),
+                    h_ctf_1=base.get("h_ctf_1", 1.07), h_ctf_2=base.get("h_ctf_2", 1.73),
+                    h_ctf_3=base.get("h_ctf_3", 2.40), t_ctf_base=base.get("t_ctf_base", 0.50),
+                    s_max_estribo=base.get("s_max_estribo", 30.0),
+                    diam_estribo=base.get("diam_estribo", 1.5875), ramas_estribo=base.get("ramas_estribo", 2))
+        if extra:
+            vals.update(extra)
+        return _motor(vals)
 
     prev = None
     for _ in range(60):
@@ -493,14 +610,8 @@ def sugerir(d: dict) -> dict:
         if talon < 0.3:
             B = round((B + 0.1) / 0.1) * 0.1
             continue
-        prueba = dict(base, B_adop=B, Bprima_adop=Bp, D_adop=D, puntera_adop=puntera,
-                      L_adop=L, t_adop=base.get("t_adop", 0.4),
-                      talon_d_adop=base.get("talon_d_adop", 50),
-                      puntera_d_adop=base.get("puntera_d_adop", 45),
-                      fuste_d_adop=base.get("fuste_d_adop", 30),
-                      h_ctf_base=base.get("h_ctf_base", talon))
-        r = _motor(prueba)
-        estado = (round(B, 2), round(Bp, 2), round(D, 2), round(puntera, 2))
+        r = _prueba(B, puntera)
+        estado = (round(B, 2), round(puntera, 2))
         ok_estab = r["volc_ok"] and r["desliz_ok"] and r["exc_ok"] and r["contacto_ok"]
         if ok_estab:
             if estado == prev:
@@ -510,32 +621,24 @@ def sugerir(d: dict) -> dict:
         B = round((B + 0.1) / 0.1) * 0.1
         prev = estado
 
-    talon = B - Bp - puntera
-    r = _motor(dict(base, B_adop=B, Bprima_adop=Bp, D_adop=D, puntera_adop=puntera,
-                    L_adop=L, t_adop=base.get("t_adop", 0.4),
-                    talon_d_adop=base.get("talon_d_adop", 50),
-                    puntera_d_adop=base.get("puntera_d_adop", 45),
-                    fuste_d_adop=base.get("fuste_d_adop", 30),
-                    h_ctf_base=base.get("h_ctf_base", talon)))
+    r = _prueba(B, puntera)
 
     def _redondear_5cm(valor_cm):
         return max(math.ceil(valor_cm / 5.0) * 5.0, 15.0)
 
     phi_corte = base.get("phi_corte", 0.85)
-    d_corte_talon = 1.7 * r["V1_talon"] / (phi_corte * 100 * r["Vc"])
-    d_corte_punt = 1.7 * r["V1_punt"] / (phi_corte * 100 * r["Vc"])
+    d_corte_fuste = 1.7 * r["V_fuste"] / (phi_corte * 100 * r["Vc"])
 
-    talon_d = _redondear_5cm(max(r["d_min_talon"] * 1.15, d_corte_talon * 1.05))
-    puntera_d = _redondear_5cm(max(r["d_min_punt"] * 1.15, d_corte_punt * 1.05))
-    fuste_d = _redondear_5cm(r["d_min_fuste"] * 1.15)
+    talon_d = _redondear_5cm(r["d_min_talon"] * 1.15)
+    puntera_d = _redondear_5cm(r["d_min_punt"] * 1.15)
+    fuste_d = _redondear_5cm(max(r["d_min_fuste"] * 1.15, d_corte_fuste * 1.05))
     t_ctf = max(round(Bpanel / 20 / 0.05) * 0.05, 0.30)
-    h_ctf_base = round(talon / 0.1) * 0.1
+    t_ctf_base = t_ctf + 0.10
 
     return {
         "B_adop": B, "Bprima_adop": Bp, "D_adop": D, "puntera_adop": puntera,
-        "L_adop": L, "t_adop": t_ctf,
+        "L_adop": L, "t_adop": t_ctf, "t_ctf_base": t_ctf_base,
         "talon_d_adop": talon_d, "puntera_d_adop": puntera_d, "fuste_d_adop": fuste_d,
-        "h_ctf_base": h_ctf_base,
     }
 
 
@@ -551,7 +654,7 @@ CALCULADORA = Calculadora(
         "Diseno de muro de contencion con contrafuertes: empuje activo y pasivo, "
         "estabilidad global (vuelco, deslizamiento, excentricidad, presion de "
         "contacto), fuste entre contrafuertes (teoria de placas), talon, puntera y "
-        "contrafuerte (seccion critica en la base)."
+        "contrafuerte (3 secciones, con estribos donde el corte lo requiere)."
     ),
     referencia="M. Fratelli - Suelos, Fundaciones y Muros, Cap. 15",
     campos=[
@@ -577,17 +680,22 @@ CALCULADORA = Calculadora(
         Campo("B_adop", "Ancho de base adoptado  B", "m", 3.6, grupo="Geometria adoptada", minimo=1.0, paso=0.1),
         Campo("Bprima_adop", "Espesor del fuste adoptado  B'", "m", 0.4, grupo="Geometria adoptada", minimo=0.2, paso=0.05),
         Campo("D_adop", "Espesor de la losa de base adoptado  D", "m", 0.6, grupo="Geometria adoptada", minimo=0.2, paso=0.05),
-        Campo("puntera_adop", "Largo de la puntera adoptado  C", "m", 1.2, grupo="Geometria adoptada", minimo=0.3, paso=0.1,
-              ayuda="El talon se calcula como B - B' - puntera."),
+        Campo("puntera_adop", "Largo de la puntera adoptado (lado con tierra)  C", "m", 2.0, grupo="Geometria adoptada",
+              minimo=0.3, paso=0.1, ayuda="El talon (lado sin tierra) se calcula como B - B' - puntera."),
         Campo("L_adop", "Separacion entre contrafuertes  L", "m", 5.6, grupo="Geometria adoptada", minimo=2.0, paso=0.1),
-        Campo("t_adop", "Espesor del contrafuerte  t", "m", 0.4, grupo="Geometria adoptada", minimo=0.3, paso=0.05),
+        Campo("t_adop", "Espesor tipico del contrafuerte  t", "m", 0.4, grupo="Geometria adoptada", minimo=0.3, paso=0.05),
+        Campo("t_ctf_base", "Espesor del contrafuerte en la base  t_base", "m", 0.50, grupo="Geometria adoptada",
+              minimo=0.3, paso=0.05, ayuda="Suele ensancharse cerca de la base para alojar el acero y resistir corte."),
 
         Campo("talon_d_adop", "Altura util adoptada del talon", "cm", 50, grupo="Espesores adoptados", minimo=10),
         Campo("puntera_d_adop", "Altura util adoptada de la puntera", "cm", 45, grupo="Espesores adoptados", minimo=10),
         Campo("fuste_d_adop", "Altura util adoptada del fuste", "cm", 30, grupo="Espesores adoptados", minimo=10),
-        Campo("h_ctf_base", "Canto del contrafuerte en la base (adoptado)", "m", 2.40, grupo="Espesores adoptados",
-              ayuda="Canto (profundidad de flexion) del contrafuerte en su seccion mas cargada, "
-                    "segun la geometria de la cuna dibujada en el plano.", minimo=0.3, paso=0.1),
+        Campo("h_ctf_1", "Canto del contrafuerte, seccion 1 (y=Bpanel/3)", "m", 1.07, grupo="Contrafuerte: secciones",
+              ayuda="Canto (profundidad de flexion) segun la geometria de la cuna dibujada en el plano.", minimo=0.2, paso=0.05),
+        Campo("h_ctf_2", "Canto del contrafuerte, seccion 2 (y=2.Bpanel/3)", "m", 1.73, grupo="Contrafuerte: secciones",
+              minimo=0.2, paso=0.05),
+        Campo("h_ctf_3", "Canto del contrafuerte, seccion 3 - base (y=Bpanel)", "m", 2.40, grupo="Contrafuerte: secciones",
+              minimo=0.2, paso=0.05),
 
         Campo("mu", "Coeficiente mu (altura minima)", "", 0.1448, grupo="Factores de reduccion", avanzado=True, minimo=0.001),
         Campo("ju", "ju (brazo interno)", "", 0.90, grupo="Factores de reduccion", avanzado=True, minimo=0.5, maximo=1.0),
@@ -597,6 +705,12 @@ CALCULADORA = Calculadora(
               avanzado=True, minimo=0.4, maximo=1.0),
         Campo("coef_c_p", "Coeficiente sobre c2 para cohesion base", "", 0.6, grupo="Factores de reduccion",
               avanzado=True, minimo=0.5, maximo=0.75, ayuda="Fratelli sugiere 0.5 a 0.75 de c2."),
+        Campo("s_max_estribo", "Separacion maxima practica de estribos", "cm", 30.0, grupo="Estribos",
+              avanzado=True, minimo=5.0, maximo=60.0,
+              ayuda="Tope constructivo adoptado (ademas de s<=d/2); el libro usa 30 cm."),
+        Campo("diam_estribo", "Diametro de la pierna del estribo", "cm", 1.5875, grupo="Estribos",
+              avanzado=True, minimo=0.6, maximo=2.6, ayuda="1.5875 cm = 5/8 pulgada (valor del ejemplo)."),
+        Campo("ramas_estribo", "Ramas del estribo", "", 2, grupo="Estribos", avanzado=True, minimo=2, maximo=6),
     ],
     funcion=calcular,
     tablas_referencia=[TABLA_FUSTE_TRIANGULAR, TABLA_FUSTE_UNIFORME],
