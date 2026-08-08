@@ -183,6 +183,37 @@ def test_As_min_contrafuerte():
     assert abs(r["As_min_ctf"] - 28.8) < 1.0
 
 
+def test_geometrias_extremas_no_rompen():
+    """Con H muy chico, el neto de carga en talon/puntera puede invertir de
+    signo (bearing < peso propio+tierra), volviendo Mu_talon/Mu_punt negativo.
+    d_min/As usan abs(Mu) (igual que el fuste) para no romper en sqrt()."""
+    r = _motor(dict(ENTRADA, H=1.5))
+    assert r["d_min_talon"] >= 0
+    assert r["d_min_punt"] >= 0
+
+    r = _motor(dict(ENTRADA, H=1.0))
+    assert r["d_min_talon"] >= 0
+    assert r["d_min_punt"] >= 0
+
+
+def test_advertencia_CL_mayor_a_0_5():
+    """Cuando C/L >= 0.5, la Sec. 6 pide analizar la puntera como placa; este
+    modulo solo implementa el voladizo, asi que debe advertirlo en las notas
+    en vez de reportar un As silenciosamente no conservador."""
+    from calculadoras.muro_contrafuertes import calcular, CALCULADORA
+    entrada = dict(ENTRADA, puntera_adop=3.0, L_adop=5.0)  # C/L = 0.6
+    d = CALCULADORA.valores_defecto()
+    d.update(entrada)
+    res = calcular(d)
+    assert any("C/L" in n and "0.5" in n for n in res.notas)
+
+    # Con C/L < 0.5 (el caso validado del ejemplo) no debe aparecer.
+    d2 = CALCULADORA.valores_defecto()
+    d2.update(ENTRADA)
+    res2 = calcular(d2)
+    assert not any("ADVERTENCIA" in n for n in res2.notas)
+
+
 if __name__ == "__main__":
     test_pesos_y_reaccion_exactos()
     test_valores_aproximan_al_libro()
@@ -193,4 +224,6 @@ if __name__ == "__main__":
     test_contrafuerte_fondo_de_losa_fila_4()
     test_corte_viga_vs_losa()
     test_As_min_contrafuerte()
+    test_geometrias_extremas_no_rompen()
+    test_advertencia_CL_mayor_a_0_5()
     print("OK - el motor reproduce el Ejemplo 15.3 dentro de tolerancia.")

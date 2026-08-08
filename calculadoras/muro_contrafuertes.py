@@ -307,9 +307,11 @@ def _motor(d: dict) -> dict:
         xi = (i + 0.5) * h_t
         V1_talon += w_talon(xi) * h_t
         M1_talon += w_talon(xi) * xi * h_t
+    # abs(): en geometrias extremas (H muy chico) el neto puede invertirse;
+    # d_min/As dependen de la magnitud, no del signo (igual que en el fuste).
     Mu_talon = 1.7 * M1_talon
-    d_min_talon = math.sqrt(Mu_talon * 100 / (mu * fc * 100))
-    As_talon = Mu_talon * 100 / (phi_flexion * fy * ju * talon_d_adop)
+    d_min_talon = math.sqrt(abs(Mu_talon) * 100 / (mu * fc * 100))
+    As_talon = abs(Mu_talon) * 100 / (phi_flexion * fy * ju * talon_d_adop)
     Vcrit_talon = _V_seccion_critica(w_talon, talon, talon_d_adop / 100.0)
     vu_talon = 1.7 * Vcrit_talon / (phi_corte * 100 * talon_d_adop)
     corte_talon = _corte_losa(vu_talon, Vc, Vcrit_talon, phi_corte, 100.0, talon_d_adop)
@@ -329,8 +331,8 @@ def _motor(d: dict) -> dict:
         V1_punt += w_punt(xi) * h_p
         M1_punt += w_punt(xi) * xi * h_p
     Mu_punt = 1.7 * M1_punt
-    d_min_punt = math.sqrt(Mu_punt * 100 / (mu * fc * 100))
-    As_punt = Mu_punt * 100 / (phi_flexion * fy * ju * puntera_d_adop)
+    d_min_punt = math.sqrt(abs(Mu_punt) * 100 / (mu * fc * 100))
+    As_punt = abs(Mu_punt) * 100 / (phi_flexion * fy * ju * puntera_d_adop)
     Vcrit_punt = _V_seccion_critica(w_punt, puntera, puntera_d_adop / 100.0)
     vu_punt = 1.7 * Vcrit_punt / (phi_corte * 100 * puntera_d_adop)
     corte_punt = _corte_losa(vu_punt, Vc, Vcrit_punt, phi_corte, 100.0, puntera_d_adop)
@@ -501,6 +503,14 @@ def calcular(d: dict) -> Resultado:
         "Terminologia: 'puntera' = lado con tierra + sobrecarga + contrafuerte (C/L="
         f"{r['CL']:.3f}); 'talon' = lado sin tierra, junto al punto de momentos por vuelco."
     )
+    if r["CL"] >= 0.5:
+        res.notas.append(
+            f"ADVERTENCIA: C/L = {r['CL']:.3f} >= 0.5 -- segun la Sec. 6, la puntera deberia "
+            "analizarse como placa (igual que el fuste), no como voladizo simple. Este modulo "
+            "solo implementa el voladizo; el As/d_min de la puntera puede no ser conservador "
+            "en esta geometria. Reducir C/L (menos puntera o mas separacion L) o verificar "
+            "a mano con la teoria de placas."
+        )
     res.notas.append(
         f"Fuste: gobierna My0 = {r['M_fuste_gob']:.0f} kg.m (empotramiento junto al "
         f"contrafuerte), aunque Mx4 = {r['Mx4_mayor_magnitud']:.0f} kg.m es mayor en magnitud; "
