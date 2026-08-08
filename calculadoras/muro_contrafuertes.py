@@ -405,24 +405,24 @@ def calcular(d: dict) -> Resultado:
     res = Resultado()
 
     res.valores = [
-        Valor("Ka", "Coeficiente de empuje activo Ka", r["Ka"], "", "tan2(45-phi/2)", 4),
-        Valor("Kp", "Coeficiente de empuje pasivo Kp", r["Kp"], "", "tan2(45+phi2/2)", 4),
+        Valor("Ka", "Ka (empuje activo)", r["Ka"], "", "tan2(45-phi/2)", 4),
+        Valor("Kp", "Kp (empuje pasivo)", r["Kp"], "", "tan2(45+phi2/2)", 4),
         Valor("Ea", "Empuje activo Ea", r["Ea"], "kg/m", "sa_max . H_ef / 2", 0),
         Valor("Ep", "Empuje pasivo Ep", r["Ep"], "kg/m", "(sp1+sp_max) . Dp / 2", 0),
         Valor("R", "Resultante vertical R", r["R"], "kg/m", "suma Wi + Eav", 0),
         Valor("M_estab", "Momento estabilizador", r["M_estab"], "kg.m/m", "suma Wi.ci", 0),
         Valor("M_volc", "Momento volcador", r["M_volc"], "kg.m/m", "Eah . brazo", 0),
         Valor("e", "Excentricidad e", r["e"], "m", "B/2 - x", 3),
-        Valor("sigma_max", "Presion maxima de contacto", r["sigma_max"] / 10000, "kg/cm2", "R/B . (1+6e/B)", 3),
-        Valor("sigma_min", "Presion minima de contacto", r["sigma_min"] / 10000, "kg/cm2", "R/B . (1-6e/B)", 3),
-        Valor("Mu_fuste", "Momento ultimo fuste (" + r["clave_fuste_gob"] + ")", r["Mu_fuste"], "kg.m", "1.7 . My0", 0),
-        Valor("As_fuste", "Acero fuste (franja gobernante)", r["As_fuste"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
-        Valor("Mu_talon", "Momento ultimo talon", r["Mu_talon"], "kg.m", "1.7 . M1", 0),
-        Valor("As_talon", "Acero talon", r["As_talon"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
-        Valor("Mu_punt", "Momento ultimo puntera", r["Mu_punt"], "kg.m", "1.7 . M1", 0),
-        Valor("As_punt", "Acero puntera", r["As_punt"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
-        Valor("Mu_ctf", "Momento ultimo contrafuerte (fondo de losa)", r["Mu_ctf"], "kg.m", "1.7 . (M3 + V3.D)", 0),
-        Valor("As_ctf", "Acero principal del contrafuerte (fondo de losa)", r["As_ctf"], "cm2", "Mu/(phi.fy.ju.d)/cos(theta)", 2),
+        Valor("sigma_max", "Presion max. contacto", r["sigma_max"] / 10000, "kg/cm2", "R/B . (1+6e/B)", 3),
+        Valor("sigma_min", "Presion min. contacto", r["sigma_min"] / 10000, "kg/cm2", "R/B . (1-6e/B)", 3),
+        Valor("Mu_fuste", "Mu fuste", r["Mu_fuste"], "kg.m", "1.7 . My0", 0),
+        Valor("As_fuste", "As fuste", r["As_fuste"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
+        Valor("Mu_talon", "Mu talon", r["Mu_talon"], "kg.m", "1.7 . M1", 0),
+        Valor("As_talon", "As talon", r["As_talon"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
+        Valor("Mu_punt", "Mu puntera", r["Mu_punt"], "kg.m", "1.7 . M1", 0),
+        Valor("As_punt", "As puntera", r["As_punt"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
+        Valor("Mu_ctf", "Mu contrafuerte (base)", r["Mu_ctf"], "kg.m", "1.7 . (M3 + V3.D)", 0),
+        Valor("As_ctf", "As contrafuerte (base)", r["As_ctf"], "cm2", "Mu/(phi.fy.ju.d)/cos(theta)", 2),
     ]
 
     diam_pulg = d["diam_estribo"] / 2.54
@@ -585,40 +585,51 @@ def _planta(B, Bp, talon, puntera, L, t):
     # Eje horizontal = longitud del muro (contrafuertes repetidos cada L);
     # eje vertical = seccion transversal (talon / fuste / puntera). Asi el
     # dibujo queda apaisado, mas legible que repetir la seccion en vertical.
-    W, H = 320, 190
-    mL, mR, mT, mB = 20, 20, 16, 32
+    #
+    # Los contrafuertes son macizos: rectangulos de ancho t, del lado de la
+    # puntera (donde queda el relleno retenido), perpendiculares al fuste.
+    # Sin diagonales -- el perfil triangular es solo del corte (Fig. 15.11).
+    W, H = 320, 195
+    mL, mR, mT, mB = 20, 34, 16, 38
     n_contrafuertes = 3
     largo = n_contrafuertes * L
     sc = min((W - mL - mR) / largo, (H - mT - mB) / (talon + Bp + puntera))
     x0, y0 = mL, mT
     talonpx, Bppx, punterapx = talon * sc, Bp * sc, puntera * sc
     Lpx = L * sc
+    tpx = max(t * sc, 3.0)
     y_stem = y0 + talonpx
     y_punt_top = y_stem + Bppx
     y_bottom = y_punt_top + punterapx
     p = []
-    # fuste: franja larga a lo largo de todos los contrafuertes
+    # contorno del cimiento (talon + puntera), de referencia
     p.append({"k": "rect", "x": x0, "y": y0, "w": n_contrafuertes * Lpx, "h": talonpx,
               "fill": None, "stroke": GRIS, "sw": 0.8, "dash": True})
-    p.append({"k": "rect", "x": x0, "y": y_stem, "w": n_contrafuertes * Lpx, "h": Bppx,
-              "fill": RELLENO_PED, "stroke": AZUL, "sw": 1.2})
     p.append({"k": "rect", "x": x0, "y": y_punt_top, "w": n_contrafuertes * Lpx, "h": punterapx,
               "fill": None, "stroke": GRIS, "sw": 0.8, "dash": True})
-    # contrafuertes: costillas triangulares saliendo del fuste hacia la puntera, cada L
+    # contrafuertes: rectangulos macizos de ancho t, del lado de la puntera, cada L
     for i in range(n_contrafuertes + 1):
         xc = x0 + i * Lpx
-        p.append({"k": "line", "x1": xc, "y1": y_stem, "x2": xc, "y2": y_punt_top,
-                  "stroke": ACERO, "sw": 0.6, "dash": True})
-    for i in range(n_contrafuertes):
-        xc0 = x0 + i * Lpx + Lpx * 0.15
-        xc1 = x0 + i * Lpx + Lpx * 0.85
-        yf = y_punt_top + punterapx * 0.9
-        p.append({"k": "line", "x1": xc0, "y1": y_punt_top, "x2": (xc0 + xc1) / 2, "y2": yf,
-                  "stroke": ACERO, "sw": 1.0})
-        p.append({"k": "line", "x1": xc1, "y1": y_punt_top, "x2": (xc0 + xc1) / 2, "y2": yf,
-                  "stroke": ACERO, "sw": 1.0})
+        p.append({"k": "rect", "x": xc - tpx / 2, "y": y_punt_top, "w": tpx, "h": punterapx,
+                  "fill": RELLENO_PED, "stroke": AZUL, "sw": 1.0})
+    # fuste: franja larga y delgada, contigua a los contrafuertes
+    p.append({"k": "rect", "x": x0, "y": y_stem, "w": n_contrafuertes * Lpx, "h": Bppx,
+              "fill": RELLENO_PED, "stroke": AZUL, "sw": 1.2})
+    # cotas: L entre ejes de contrafuertes, puntera
     p += cota_h(x0, x0 + Lpx, y0 - 6, f"L = {L:.1f} m", arriba=True)
-    p += cota_v(x0 + n_contrafuertes * Lpx + 12, y_punt_top, y_bottom, f"punt. {puntera:.1f} m")
+    p += cota_v(x0 + n_contrafuertes * Lpx + 10, y_punt_top, y_bottom, f"punt. {puntera:.1f} m")
+    # cota de t: lineas de extension en abanico (el contrafuerte es muy angosto
+    # para que el texto entre entre las marcas de una cota comun)
+    x_a, x_b = x0 - tpx / 2, x0 + tpx / 2
+    yA, yB = y_bottom + 6, y_bottom + 16
+    p.append({"k": "line", "x1": x_a, "y1": y_bottom, "x2": x_a - 6, "y2": yB,
+              "stroke": GRIS, "sw": 0.7})
+    p.append({"k": "line", "x1": x_b, "y1": y_bottom, "x2": x_b + 6, "y2": yB,
+              "stroke": GRIS, "sw": 0.7})
+    p.append({"k": "line", "x1": x_a - 6, "y1": yB, "x2": x_b + 6, "y2": yB,
+              "stroke": GRIS, "sw": 0.8})
+    p.append({"k": "text", "x": (x_a + x_b) / 2, "y": yB + 10, "s": f"t = {t*100:.0f} cm",
+              "size": 8.5, "anchor": "middle", "fill": GRIS, "bold": True})
     p.append({"k": "text", "x": W / 2, "y": H - 6, "s": f"contrafuertes @ {L:.1f} m, t = {t*100:.0f} cm",
               "size": 8, "anchor": "middle", "fill": ACERO})
     return {"titulo": "Planta", "ancho": W, "alto": H, "primitivas": p}

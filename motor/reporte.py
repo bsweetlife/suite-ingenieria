@@ -51,7 +51,17 @@ def _estilos():
 
 
 def _tabla(datos, anchos, encabezado=True):
-    datos = [[_s(c) for c in fila] for fila in datos]
+    ss = getSampleStyleSheet()
+    estilo_celda = ParagraphStyle("Celda", parent=ss["Normal"], fontSize=9, leading=11)
+    estilo_encabezado = ParagraphStyle("CeldaEnc", parent=estilo_celda, textColor=colors.white,
+                                        fontName="Helvetica-Bold")
+
+    def _celda(c, es_encabezado):
+        texto = _s(c)
+        return Paragraph(texto, estilo_encabezado if es_encabezado else estilo_celda)
+
+    datos = [[_celda(c, encabezado and i == 0) for c in fila]
+             for i, fila in enumerate(datos)]
     t = Table(datos, colWidths=anchos, hAlign="LEFT")
     estilo = [
         ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
@@ -122,17 +132,10 @@ def generar_pdf(calc: Calculadora, entradas: dict, res: Resultado,
     E.append(Paragraph("3. Verificaciones", ss["Seccion"]))
     filas = [["Verificación", "Condición", "Resultado"]]
     for c in res.chequeos:
-        filas.append([c.nombre, f"{c.izquierda}  {c.relacion}  {c.derecha}",
-                      "CUMPLE" if c.cumple else "NO CUMPLE"])
-    t = _tabla(filas, [5.5 * cm, 7.5 * cm, 3 * cm])
-    ts = t._argW  # noqa
-    estilo_extra = []
-    for i, c in enumerate(res.chequeos, start=1):
-        color = _VERDE if c.cumple else _ROJO
-        estilo_extra.append(("TEXTCOLOR", (2, i), (2, i), color))
-        estilo_extra.append(("FONTNAME", (2, i), (2, i), "Helvetica-Bold"))
-    t.setStyle(TableStyle(estilo_extra))
-    E.append(t)
+        color = "#1b7f3b" if c.cumple else "#b3261e"
+        veredicto_cell = f'<font color="{color}"><b>{"CUMPLE" if c.cumple else "NO CUMPLE"}</b></font>'
+        filas.append([c.nombre, f"{c.izquierda}  {c.relacion}  {c.derecha}", veredicto_cell])
+    E.append(_tabla(filas, [5.5 * cm, 7.5 * cm, 3 * cm]))
     E.append(Spacer(1, 6))
     veredicto = "DISEÑO CONFORME" if res.conforme else "REVISAR: alguna verificación no cumple"
     E.append(Paragraph(
