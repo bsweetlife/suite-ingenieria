@@ -29,16 +29,25 @@ porque el corte acumulado V3 actua sobre el brazo adicional D:
 Con esto, M_fondo/As_fondo reproducen la 4ta fila del Ejemplo 15.3 (M~290 tm,
 As~68.96 cm2) dentro de ~1%, y es la que gobierna el armado principal.
 
-NOTA SOBRE EL CANTO DEL CONTRAFUERTE (geometria, no dato suelto): el canto h
-(ancho de la cuña triangular, usado como profundidad de flexion, d=0.9h) se
-deriva de B' y puntera, no se captura como campo aparte: la cuña va desde la
-cara POSTERIOR del fuste (canto 0 en el tope del panel, y=0 -- se funde
-integrada con todo el ancho del fuste, no solo desde su cara externa) hasta
-el extremo de la puntera (canto maximo en la base, y=Bpanel). Por eso:
-    canto(y) = B' + puntera . (y / Bpanel)   ->   canto_base = B' + puntera
-En el ejemplo, canto_base = 0.4 + 2.0 = 2.40 m, que es exactamente el h=2.40
-de la fila 3/4 de la tabla del libro, y coincide con el extremo de la puntera
-medido desde la cara posterior del fuste (ningun voladizo fuera de la losa).
+NOTA SOBRE EL CANTO DEL CONTRAFUERTE (geometria, no dato suelto): "canto" (h,
+usado como profundidad de flexion, d=0.9h) y "puntera" NO son la misma
+distancia -- miden cosas distintas y por eso canto_base (2.40 m) > puntera
+(2.00 m) sin que el contrafuerte quede sin apoyo:
+
+- La cuña VISIBLE del contrafuerte (el volado triangular mas alla de la cara
+  posterior del fuste, lo que se dibuja en el esquema) crece de 0 en el tope
+  del panel (y=0) a exactamente "puntera" en la base (y=Bpanel). Su punta
+  queda siempre al ras del borde de la losa -- nunca la sobrepasa.
+- El canto h usado para el calculo de acero es la profundidad de flexion de
+  la seccion COMPUESTA contrafuerte+fuste (accion tipo viga T/L): el acero de
+  traccion va en el borde inclinado de la cuña (lado puntera) y la zona de
+  compresion cae en la cara ANTERIOR (exterior) del fuste, porque contra-
+  fuerte y fuste se funden monoliticos y el fuste aporta su espesor B' como
+  ala de compresion en toda la altura. Por eso:
+      canto(y) = B' + puntera . (y / Bpanel)   ->   canto_base = B' + puntera
+  En el ejemplo, canto_base = 0.4 + 2.0 = 2.40 m = el h=2.40 de la fila 3/4
+  del libro, pero el volado fisico (lo que se apoya sobre la losa) sigue
+  siendo "puntera" = 2.00 m, sin voladizo fuera de ella.
 """
 from __future__ import annotations
 
@@ -363,15 +372,20 @@ def _motor(d: dict) -> dict:
     # desde el tope del fuste. Con y medido desde el tope del fuste:
     #   V(y) = L . k1 . (y-z0)^2 / 2 ,   M(y) = L . k1 . (y-z0)^3 / 6 ,  k1 = gs.Ka
     k1 = gs * Ka
-    # Canto (ancho de la cuña triangular) por geometria pura, no como dato
-    # suelto: el paramento inclinado del contrafuerte va desde la cara
-    # posterior del fuste (canto 0 en el tope, y=0) hasta el extremo de la
-    # puntera (canto = Bp + puntera en la base, y=Bpanel) -- se mide desde la
-    # cara posterior (no la delantera) porque el contrafuerte se funde
-    # integrado con todo el ancho del fuste, no solo desde su cara externa.
-    # Con esto, canto_base = Bp + puntera coincide exactamente con el extremo
-    # de la puntera (ningun voladizo fuera de la losa) y con h=2.40 del
-    # Ejemplo 15.3 (Bp=0.4 + puntera=2.0 = 2.40).
+    # Canto de diseno (h, profundidad de flexion) por geometria pura, no como
+    # dato suelto. OJO: "canto" y "puntera" NO son la misma distancia:
+    #   - la cuña VISIBLE (lo que se dibuja, el volado del contrafuerte mas
+    #     alla de la cara posterior del fuste) crece de 0 en el tope del
+    #     panel a "puntera" en la base -- su punta queda al ras del borde de
+    #     la losa, nunca la sobrepasa (ver _corte(), que dibuja exactamente
+    #     ese ancho, independiente de este canto de diseno).
+    #   - el canto h de aqui es la profundidad de flexion de la seccion
+    #     COMPUESTA contrafuerte+fuste (accion tipo viga T/L): el fuste aporta
+    #     su espesor Bp como ala de compresion (esta monolitico con la cuña en
+    #     toda la altura), por eso h = Bp + puntera.(y/Bpanel), mayor que el
+    #     volado fisico.
+    # En el Ejemplo 15.3: canto_base = 0.4 + 2.0 = 2.40 m = h de la fila 3/4
+    # del libro; el volado fisico (apoyado sobre la losa) es puntera = 2.0 m.
     canto_base = Bp + puntera
     r["canto_base_ctf"] = canto_base
     h_ctf = [Bp + puntera * frac for frac in (1 / 3, 2 / 3, 1.0)]
@@ -445,7 +459,10 @@ def calcular(d: dict) -> Resultado:
         Valor("As_punt", "As puntera", r["As_punt"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
         Valor("Mu_ctf", "Mu contrafuerte (base)", r["Mu_ctf"], "kg.m", "1.7 . (M3 + V3.D)", 0),
         Valor("As_ctf", "As contrafuerte (base)", r["As_ctf"], "cm2", "Mu/(phi.fy.ju.d)/cos(theta)", 2),
-        Valor("canto_base_ctf", "Canto del contrafuerte en la base", r["canto_base_ctf"], "m", "B' + puntera", 2),
+        Valor("canto_base_ctf", "Canto de diseno en la base (viga T con fuste)", r["canto_base_ctf"], "m",
+              "B' + puntera (seccion compuesta contrafuerte+fuste)", 2),
+        Valor("voladizo_ctf", "Volado fisico en la base (apoyado en la losa)", d["puntera_adop"], "m",
+              "= puntera, sin sobresalir de la losa", 2),
     ]
 
     diam_pulg = d["diam_estribo"] / 2.54
@@ -546,11 +563,13 @@ def calcular(d: dict) -> Resultado:
         "por eso el armado principal se calcula en el fondo de la losa, no en la base del fuste."
     )
     res.notas.append(
-        f"Canto del contrafuerte: se deriva por geometria (canto_base = B' + puntera = "
-        f"{r['canto_base_ctf']:.2f} m), no se captura como dato aparte. La cuña va desde la cara "
-        "posterior del fuste (canto 0 en el tope del panel) hasta el extremo de la puntera "
-        "(canto maximo en la base), por lo que el contrafuerte queda exactamente apoyado sobre "
-        "la losa, sin voladizo fuera de ella."
+        f"Canto del contrafuerte: 'canto' (h={r['canto_base_ctf']:.2f} m en la base, usado para el "
+        f"acero) y 'puntera' ({d['puntera_adop']:.2f} m, el volado fisico apoyado en la losa) miden "
+        "cosas distintas -- no hay voladizo fuera de la losa. La cuña visible crece de 0 en el "
+        "tope del panel a exactamente 'puntera' en la base (se dibuja asi en el esquema). El canto "
+        "h usado en el calculo de acero es mayor porque es la profundidad de flexion de la seccion "
+        "COMPUESTA contrafuerte+fuste (accion tipo viga T): h = B' + puntera, ya que el fuste esta "
+        "monolitico con la cuña y aporta su espesor como ala de compresion en toda la altura."
     )
     res.notas.append(
         "Talon y puntera son losas: el corte se verifica en la seccion critica a d de la cara "
