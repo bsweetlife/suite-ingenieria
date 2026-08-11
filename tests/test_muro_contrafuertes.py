@@ -28,7 +28,6 @@ ENTRADA = dict(
     B_adop=3.6, Bprima_adop=0.4, D_adop=0.6, puntera_adop=2.0, L_adop=5.6,
     t_adop=0.4, t_ctf_base=0.50,
     talon_d_adop=50, puntera_d_adop=50, fuste_d_adop=30,
-    h_ctf_1=1.07, h_ctf_2=1.73, h_ctf_3=2.40,
     mu=0.1448, ju=0.90, phi_corte=0.85, phi_flexion=0.90,
     coef_tanphi_p=0.67, coef_c_p=0.6,
     s_max_estribo=30.0, diam_estribo=1.5875, ramas_estribo=2,
@@ -104,12 +103,28 @@ def test_fuste_gobierna_My0():
     assert abs(r["d_min_fuste"] - 16) < 1.0
 
 
+def test_canto_contrafuerte_deriva_de_geometria():
+    """A0: el canto del contrafuerte no es un dato suelto -- por geometria
+    pura, canto_base = B' + puntera (la cuña va desde la cara posterior del
+    fuste hasta el extremo de la puntera). Con B'=0.4 y puntera=2.0,
+    canto_base debe dar 2.40 m, igual al h=2.40 del Ejemplo 15.3, y el
+    contrafuerte queda exactamente apoyado sobre la losa (sin voladizo)."""
+    r = _motor(ENTRADA)
+    assert abs(r["canto_base_ctf"] - (ENTRADA["Bprima_adop"] + ENTRADA["puntera_adop"])) < 1e-9
+    assert abs(r["canto_base_ctf"] - 2.40) < 0.01
+    secciones = r["secciones_ctf"]
+    Bp, puntera = ENTRADA["Bprima_adop"], ENTRADA["puntera_adop"]
+    h_esperado = [Bp + puntera / 3, Bp + puntera * 2 / 3, Bp + puntera]
+    for i, s in enumerate(secciones):
+        assert abs(s["h"] - h_esperado[i]) < 0.01, f"seccion {i+1} canto"
+
+
 def test_contrafuerte_3_secciones():
     """Las 3 secciones (y=Bpanel/3, 2Bpanel/3, Bpanel) usan el mismo recorte
     por traccion z0 que el empuje activo global. Con h1=1.07, h2=1.73,
-    h3=2.40 (canto de cada seccion, del ejemplo), M/As/vu deben coincidir con
-    el libro dentro de ~2%: seccion1 M=3358 As=1.78, seccion2 M=56034
-    As=18.50, seccion3(base) M=233262 As=55.47, vu=2.9/11.73/17.51."""
+    h3=2.40 (canto de cada seccion, derivado de B'+puntera), M/As/vu deben
+    coincidir con el libro dentro de ~2%: seccion1 M=3358 As=1.78, seccion2
+    M=56034 As=18.50, seccion3(base) M=233262 As=55.47, vu=2.9/11.73/17.51."""
     r = _motor(ENTRADA)
     secciones = r["secciones_ctf"]
     assert len(secciones) == 3
@@ -220,6 +235,7 @@ if __name__ == "__main__":
     test_sigma_max_kgcm2()
     test_verificaciones_de_estabilidad_cumplen()
     test_fuste_gobierna_My0()
+    test_canto_contrafuerte_deriva_de_geometria()
     test_contrafuerte_3_secciones()
     test_contrafuerte_fondo_de_losa_fila_4()
     test_corte_viga_vs_losa()

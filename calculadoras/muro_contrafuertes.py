@@ -28,6 +28,17 @@ porque el corte acumulado V3 actua sobre el brazo adicional D:
     M_fondo = M3 + V3.D
 Con esto, M_fondo/As_fondo reproducen la 4ta fila del Ejemplo 15.3 (M~290 tm,
 As~68.96 cm2) dentro de ~1%, y es la que gobierna el armado principal.
+
+NOTA SOBRE EL CANTO DEL CONTRAFUERTE (geometria, no dato suelto): el canto h
+(ancho de la cuña triangular, usado como profundidad de flexion, d=0.9h) se
+deriva de B' y puntera, no se captura como campo aparte: la cuña va desde la
+cara POSTERIOR del fuste (canto 0 en el tope del panel, y=0 -- se funde
+integrada con todo el ancho del fuste, no solo desde su cara externa) hasta
+el extremo de la puntera (canto maximo en la base, y=Bpanel). Por eso:
+    canto(y) = B' + puntera . (y / Bpanel)   ->   canto_base = B' + puntera
+En el ejemplo, canto_base = 0.4 + 2.0 = 2.40 m, que es exactamente el h=2.40
+de la fila 3/4 de la tabla del libro, y coincide con el extremo de la puntera
+medido desde la cara posterior del fuste (ningun voladizo fuera de la losa).
 """
 from __future__ import annotations
 
@@ -352,7 +363,18 @@ def _motor(d: dict) -> dict:
     # desde el tope del fuste. Con y medido desde el tope del fuste:
     #   V(y) = L . k1 . (y-z0)^2 / 2 ,   M(y) = L . k1 . (y-z0)^3 / 6 ,  k1 = gs.Ka
     k1 = gs * Ka
-    h_ctf = [d["h_ctf_1"], d["h_ctf_2"], d["h_ctf_3"]]
+    # Canto (ancho de la cuña triangular) por geometria pura, no como dato
+    # suelto: el paramento inclinado del contrafuerte va desde la cara
+    # posterior del fuste (canto 0 en el tope, y=0) hasta el extremo de la
+    # puntera (canto = Bp + puntera en la base, y=Bpanel) -- se mide desde la
+    # cara posterior (no la delantera) porque el contrafuerte se funde
+    # integrado con todo el ancho del fuste, no solo desde su cara externa.
+    # Con esto, canto_base = Bp + puntera coincide exactamente con el extremo
+    # de la puntera (ningun voladizo fuera de la losa) y con h=2.40 del
+    # Ejemplo 15.3 (Bp=0.4 + puntera=2.0 = 2.40).
+    canto_base = Bp + puntera
+    r["canto_base_ctf"] = canto_base
+    h_ctf = [Bp + puntera * frac for frac in (1 / 3, 2 / 3, 1.0)]
     bw_ctf = [t * 100, t * 100, d["t_ctf_base"] * 100]     # cm; la base se ensancha (nota original Sec. 3)
     fracciones_y = [1 / 3, 2 / 3, 1.0]
     secciones_ctf = []
@@ -423,6 +445,7 @@ def calcular(d: dict) -> Resultado:
         Valor("As_punt", "As puntera", r["As_punt"], "cm2/m", "Mu/(phi.fy.ju.d)", 2),
         Valor("Mu_ctf", "Mu contrafuerte (base)", r["Mu_ctf"], "kg.m", "1.7 . (M3 + V3.D)", 0),
         Valor("As_ctf", "As contrafuerte (base)", r["As_ctf"], "cm2", "Mu/(phi.fy.ju.d)/cos(theta)", 2),
+        Valor("canto_base_ctf", "Canto del contrafuerte en la base", r["canto_base_ctf"], "m", "B' + puntera", 2),
     ]
 
     diam_pulg = d["diam_estribo"] / 2.54
@@ -521,6 +544,13 @@ def calcular(d: dict) -> Resultado:
         "hasta la base del fuste. El canto h ya no crece en ese tramo, pero el momento si sigue "
         f"creciendo (M_fondo = M_base_fuste + V_base_fuste . D = {r['fondo_losa_ctf']['M']:.0f} kg.m); "
         "por eso el armado principal se calcula en el fondo de la losa, no en la base del fuste."
+    )
+    res.notas.append(
+        f"Canto del contrafuerte: se deriva por geometria (canto_base = B' + puntera = "
+        f"{r['canto_base_ctf']:.2f} m), no se captura como dato aparte. La cuña va desde la cara "
+        "posterior del fuste (canto 0 en el tope del panel) hasta el extremo de la puntera "
+        "(canto maximo en la base), por lo que el contrafuerte queda exactamente apoyado sobre "
+        "la losa, sin voladizo fuera de ella."
     )
     res.notas.append(
         "Talon y puntera son losas: el corte se verifica en la seccion critica a d de la cara "
@@ -676,8 +706,7 @@ def sugerir(d: dict) -> dict:
                     talon_d_adop=base.get("talon_d_adop", 50),
                     puntera_d_adop=base.get("puntera_d_adop", 50),
                     fuste_d_adop=base.get("fuste_d_adop", 30),
-                    h_ctf_1=base.get("h_ctf_1", 1.07), h_ctf_2=base.get("h_ctf_2", 1.73),
-                    h_ctf_3=base.get("h_ctf_3", 2.40), t_ctf_base=base.get("t_ctf_base", 0.50),
+                    t_ctf_base=base.get("t_ctf_base", 0.50),
                     s_max_estribo=base.get("s_max_estribo", 30.0),
                     diam_estribo=base.get("diam_estribo", 1.5875), ramas_estribo=base.get("ramas_estribo", 2))
         if extra:
@@ -785,12 +814,6 @@ CALCULADORA = Calculadora(
         Campo("talon_d_adop", "Altura util adoptada del talon", "cm", 50, grupo="Espesores adoptados", minimo=10),
         Campo("puntera_d_adop", "Altura util adoptada de la puntera", "cm", 50, grupo="Espesores adoptados", minimo=10),
         Campo("fuste_d_adop", "Altura util adoptada del fuste", "cm", 30, grupo="Espesores adoptados", minimo=10),
-        Campo("h_ctf_1", "Canto del contrafuerte, seccion 1 (y=Bpanel/3)", "m", 1.07, grupo="Contrafuerte: secciones",
-              ayuda="Canto (profundidad de flexion) segun la geometria de la cuna dibujada en el plano.", minimo=0.2, paso=0.05),
-        Campo("h_ctf_2", "Canto del contrafuerte, seccion 2 (y=2.Bpanel/3)", "m", 1.73, grupo="Contrafuerte: secciones",
-              minimo=0.2, paso=0.05),
-        Campo("h_ctf_3", "Canto del contrafuerte, seccion 3 - base (y=Bpanel)", "m", 2.40, grupo="Contrafuerte: secciones",
-              minimo=0.2, paso=0.05),
 
         Campo("mu", "Coeficiente mu (altura minima)", "", 0.1448, grupo="Factores de reduccion", avanzado=True, minimo=0.001),
         Campo("ju", "ju (brazo interno)", "", 0.90, grupo="Factores de reduccion", avanzado=True, minimo=0.5, maximo=1.0),
