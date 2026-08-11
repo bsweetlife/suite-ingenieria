@@ -752,7 +752,6 @@ CALCULADORA = Calculadora(
         "contacto), fuste entre contrafuertes (teoria de placas), talon, puntera y "
         "contrafuerte (3 secciones, con estribos donde el corte lo requiere)."
     ),
-    referencia="M. Fratelli - Suelos, Fundaciones y Muros, Cap. 15",
     campos=[
         Campo("H", "Altura total del muro  H", "m", 9.0, grupo="Geometria a contener", minimo=1.0),
 
@@ -800,7 +799,7 @@ CALCULADORA = Calculadora(
         Campo("coef_tanphi_p", "Coeficiente sobre tan(phi2) para friccion base", "", 0.67, grupo="Factores de reduccion",
               avanzado=True, minimo=0.4, maximo=1.0),
         Campo("coef_c_p", "Coeficiente sobre c2 para cohesion base", "", 0.6, grupo="Factores de reduccion",
-              avanzado=True, minimo=0.5, maximo=0.75, ayuda="Fratelli sugiere 0.5 a 0.75 de c2."),
+              avanzado=True, minimo=0.5, maximo=0.75, ayuda="Rango tipico recomendado: 0.5 a 0.75 de c2."),
         Campo("s_max_estribo", "Separacion maxima practica de estribos", "cm", 30.0, grupo="Estribos",
               avanzado=True, minimo=5.0, maximo=60.0,
               ayuda="Tope constructivo adoptado (ademas de s<=d/2); el libro usa 30 cm."),
