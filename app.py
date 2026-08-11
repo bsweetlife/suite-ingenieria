@@ -9,6 +9,9 @@ este archivo: basta con crear su modulo.
 """
 from __future__ import annotations
 
+import json
+from datetime import datetime
+
 import streamlit as st
 
 from motor.registro import cargar_calculadoras, por_categoria
@@ -145,6 +148,30 @@ def _entradas_actuales(calc: Calculadora) -> dict:
     return {c.clave: st.session_state.get(f"in_{calc.id}_{c.clave}", c.defecto) for c in calc.campos}
 
 
+def _cargar_guardado(calc: Calculadora):
+    """Callback: al subir un .json guardado, restaura sus valores en los campos."""
+    archivo = st.session_state.get(f"cargar_{calc.id}")
+    st.session_state[f"cargar_error_{calc.id}"] = None
+    if archivo is None:
+        return
+    try:
+        datos = json.loads(archivo.getvalue().decode("utf-8"))
+    except Exception:
+        st.session_state[f"cargar_error_{calc.id}"] = "El archivo no es un .json valido."
+        return
+    if datos.get("calculadora") != calc.id:
+        st.session_state[f"cargar_error_{calc.id}"] = (
+            f"Este archivo es de otra calculadora ('{datos.get('calculadora', '?')}'), "
+            f"no de '{calc.nombre}'."
+        )
+        return
+    claves_validas = {c.clave for c in calc.campos}
+    for k, v in datos.get("entradas", {}).items():
+        if k in claves_validas:
+            st.session_state[f"in_{calc.id}_{k}"] = v
+    st.session_state[f"cargar_ok_{calc.id}"] = True
+
+
 def _aplicar_sugerencia(calc: Calculadora):
     """Callback: escribe en los campos los valores sugeridos que cumplen."""
     limites = {c.clave: (c.minimo, c.maximo) for c in calc.campos}
@@ -169,6 +196,16 @@ def vista_calculadora(calc: Calculadora):
     # ---- Formulario (izquierda) ----
     with izq:
         st.subheader("Datos de entrada")
+
+        with st.expander("📂 Cargar cálculo guardado"):
+            st.file_uploader(
+                "Sube un archivo .json descargado con el botón 'Guardar cálculo'",
+                type=["json"], key=f"cargar_{calc.id}",
+                on_change=_cargar_guardado, args=(calc,))
+            if st.session_state.get(f"cargar_error_{calc.id}"):
+                st.error(st.session_state[f"cargar_error_{calc.id}"])
+            if st.session_state.pop(f"cargar_ok_{calc.id}", False):
+                st.success("✅ Datos cargados en los campos de abajo.")
 
         for c in calc.campos:          # asegura valores en session_state
             _init_estado(c, calc.id)
@@ -321,10 +358,26 @@ def vista_calculadora(calc: Calculadora):
     proyecto = m1.text_input("Proyecto")
     elemento = m2.text_input("Elemento / eje")
     autor = m3.text_input("Calculó")
+
+    d1, d2 = st.columns(2)
     pdf = generar_pdf(calc, entradas, res, proyecto, elemento, autor)
-    st.download_button("⬇️  Descargar PDF", data=pdf,
+    d1.download_button("⬇️  Descargar PDF", data=pdf,
                        file_name=f"memoria_{calc.id}.pdf", mime="application/pdf",
                        use_container_width=True)
+
+    guardado = {
+        "app": "suite-ingenieria", "version": 1,
+        "calculadora": calc.id, "nombre_calculadora": calc.nombre,
+        "guardado_en": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "proyecto": proyecto, "elemento": elemento, "autor": autor,
+        "entradas": entradas,
+    }
+    d2.download_button(
+        "💾  Guardar cálculo (.json)",
+        data=json.dumps(guardado, indent=2, ensure_ascii=False),
+        file_name=f"calculo_{calc.id}_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+        mime="application/json", use_container_width=True,
+        help="Descarga los datos de entrada para recuperarlos despues con 'Cargar cálculo guardado'.")
 
 
 # --------------------------------------------------------------------------- #
