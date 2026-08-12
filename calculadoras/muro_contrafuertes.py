@@ -55,7 +55,7 @@ import math
 
 from motor.base import Calculadora, Campo, Chequeo, Resultado, Valor
 from motor.dibujo import cota_h, cota_v, AZUL, GRIS, RELLENO_ZAP, RELLENO_PED, ACERO
-from datos.acero import sugerir_armado
+from datos.acero import sugerir_armado, diametro_barras, barras_con_diametro, ld_basico, BARRAS
 
 
 # --------------------------------------------------------------------------- #
@@ -402,12 +402,16 @@ def _motor(d: dict) -> dict:
         theta = math.atan(h_cm / (Bpanel * 100))
         d_cm = 0.9 * h_cm
         As = (Mu * 100) / (phi_flexion * fy * ju * d_cm) / math.cos(theta)
+        # As minimo de flexion (14/fy.b.d), con el b y d PROPIOS de esta seccion
+        # (el contrafuerte se ensancha en la base: usar el b de la base ahi
+        # subestimaria el As_min en las secciones superiores, mas angostas).
+        As_min = (14 / fy) * bw * d_cm
         vu = 1.7 * V / (phi_corte * bw * d_cm)
         est = _corte_viga(vu, Vc, fc, d_cm, bw, fy, s_max_estribo, diam_estribo, ramas_estribo)
         secciones_ctf.append({
             "nivel": i, "y": y, "h": h_m, "bw": bw, "V": V, "M": M, "Mu": Mu,
-            "theta": theta, "d": d_cm, "As": As, "vu": vu, "estribos": est,
-            "corte_ok": est["ok"],
+            "theta": theta, "d": d_cm, "As": As, "As_min": As_min, "As_gob": max(As, As_min),
+            "vu": vu, "estribos": est, "corte_ok": est["ok"],
         })
     r["secciones_ctf"] = secciones_ctf
 
@@ -422,12 +426,16 @@ def _motor(d: dict) -> dict:
     M4 = base_ctf["M"] + base_ctf["V"] * D
     Mu4 = 1.7 * M4
     As4 = (Mu4 * 100) / (phi_flexion * fy * ju * base_ctf["d"]) / math.cos(base_ctf["theta"])
-    r["fondo_losa_ctf"] = {"M": M4, "Mu": Mu4, "As": As4, "d": base_ctf["d"],
-                            "theta": base_ctf["theta"], "V": base_ctf["V"]}
+    # Mismo b y d que la seccion 3 (el canto ya no crece en el tramo D, ver nota
+    # arriba): usar base_ctf["bw"], el espesor REAL de la base (t_ctf_base, la
+    # base se ensancha respecto al resto del contrafuerte, ver Sec. 3), no "t".
+    As_min4 = (14 / fy) * base_ctf["bw"] * base_ctf["d"]
+    r["fondo_losa_ctf"] = {"M": M4, "Mu": Mu4, "As": As4, "As_min": As_min4, "As_gob": max(As4, As_min4),
+                            "d": base_ctf["d"], "theta": base_ctf["theta"], "V": base_ctf["V"]}
 
     # El fondo de la losa gobierna el armado principal (mayor momento, mismo d).
     As_ctf = As4
-    As_min_ctf = (14 / fy) * (t * 100) * base_ctf["d"]      # 14/fy . b . d (b = espesor tipico del contrafuerte)
+    As_min_ctf = As_min4
     ctf_corte_ok = all(s["corte_ok"] for s in secciones_ctf)
 
     r.update(As_ctf=As_ctf, As_min_ctf=As_min_ctf, d_ctf=base_ctf["d"], theta_ctf=base_ctf["theta"],
@@ -529,12 +537,57 @@ def calcular(d: dict) -> Resultado:
     if a_punt:
         armados.append(f"Puntera: {a_punt.texto} (a/s) - provee {a_punt.As_provisto:.2f} cm2/m "
                         f">= {r['As_punt']:.2f} requerido")
-    armados.append(f"Contrafuerte (fondo de losa, principal inclinado): As = {r['As_ctf']:.2f} cm2 "
-                    f"(As min = {r['As_min_ctf']:.2f} cm2)")
+    # Un solo diametro para todo el contrafuerte, fijado por la seccion mas
+    # exigida (el fondo de losa, donde el momento acumulado gobierna); la
+    # cantidad de barras de ese mismo diametro se recalcula nivel a nivel,
+    # igual que se detallan los cortes de barra en obra (menos barras hacia
+    # el tope, donde el momento es menor).
+    fondo = r["fondo_losa_ctf"]
+    diam_ctf = diametro_barras(fondo["As_gob"])
+    armados.append(f"Contrafuerte, acero principal (borde inclinado, anclado en el paramento "
+                    f"exterior del fuste). Diametro adoptado Ø{diam_ctf} en toda la altura; "
+                    "cantidad de barras por nivel (menos barras hacia el tope):")
+    for s in r["secciones_ctf"]:
+        barras = barras_con_diametro(s["As_gob"], diam_ctf)
+        rige = " -- rige As minimo, no el momento" if s["As_min"] > s["As"] else ""
+        armados.append(f"&nbsp;&nbsp;Nivel {s['nivel']} (a {s['y']:.2f} m del tope del panel): "
+                        f"{barras.texto} - provee {barras.As_provisto:.2f} cm2 >= "
+                        f"{s['As_gob']:.2f} cm2 requerido{rige}")
+    barras_fondo = barras_con_diametro(fondo["As_gob"], diam_ctf)
+    rige_fondo = " -- rige As minimo, no el momento" if fondo["As_min"] > fondo["As"] else ""
+    armados.append(f"&nbsp;&nbsp;Fondo de losa (base del contrafuerte, gobierna todo el armado): "
+                    f"{barras_fondo.texto} - provee {barras_fondo.As_provisto:.2f} cm2 >= "
+                    f"{fondo['As_gob']:.2f} cm2 requerido{rige_fondo}")
+
+    # ---- Continuidad y corte del acero principal (no son grupos independientes) ----
+    db_ctf_cm = dict(BARRAS)[diam_ctf]
+    ld_ctf = ld_basico(d["fy"], d["fc"], db_ctf_cm)
+    conteos = [("fondo de losa", barras_fondo.n_barras)] + [
+        (f"nivel {s['nivel']}", barras_con_diametro(s["As_gob"], diam_ctf).n_barras)
+        for s in reversed(r["secciones_ctf"])
+    ]
+    armados.append(
+        "Continuidad: las barras de arriba NO son grupos independientes por nivel -- todas "
+        "corren continuas desde el fondo de la losa (su anclaje) y se van cortando hacia "
+        f"arriba a medida que el momento decrece, cada corte extendido al menos "
+        f"{ld_ctf:.0f} cm mas alla del punto teorico (long. de anclaje, ver nota):"
+    )
+    for (etq_prev, n_prev), (etq_next, n_next) in zip(conteos, conteos[1:]):
+        cortadas = n_prev - n_next
+        if cortadas > 0:
+            armados.append(f"&nbsp;&nbsp;De {etq_prev} ({n_prev} barras) hacia {etq_next}: "
+                            f"se cortan {cortadas} (quedan {n_next}), corte real a >= "
+                            f"{ld_ctf:.0f} cm mas alla de {etq_next}.")
+    armados.append(f"&nbsp;&nbsp;Las {conteos[-1][1]} barras restantes de {conteos[-1][0]} "
+                    "continuan hasta la punta del panel (armadura minima, sin corte).")
+
+    armados.append("Contrafuerte, estribos (corte):")
     for s in r["secciones_ctf"]:
         if s["estribos"]["necesita"]:
             txt = f"@ {s['estribos']['s']:.0f} cm" if s["estribos"]["ok"] else "insuficientes"
-            armados.append(f"&nbsp;&nbsp;Estribos nivel {s['nivel']} ({ramas} ramas Ø{diam_pulg:.3g}\"): {txt}")
+            armados.append(f"&nbsp;&nbsp;Nivel {s['nivel']} ({ramas} ramas Ø{diam_pulg:.3g}\"): {txt}")
+        else:
+            armados.append(f"&nbsp;&nbsp;Nivel {s['nivel']}: no requiere (vu &lt;= vc)")
     # separador <br/> (no "\n"): se muestra crudo en un <span> de app.py y en
     # un Paragraph de reportlab en el PDF, ambos interpretan <br/> pero no \n.
     res.armado_texto = "<br/>".join(armados)
@@ -542,6 +595,22 @@ def calcular(d: dict) -> Resultado:
     res.notas.append(
         "Terminologia: 'puntera' = lado con tierra + sobrecarga + contrafuerte (C/L="
         f"{r['CL']:.3f}); 'talon' = lado sin tierra, junto al punto de momentos por vuelco."
+    )
+    res.notas.append(
+        "Contrafuerte: la cantidad de barras por nivel usa siempre el mayor entre el As por "
+        "momento y el As minimo de flexion (14/fy.b.d) de esa seccion. El Ejemplo 15.3 del "
+        "libro solo señala el As minimo donde es obvio que gobierna (nivel 1); el motor lo "
+        "verifica en los 4 niveles, por lo que el conteo de barras puede quedar 1 barra por "
+        "encima de la tabla impresa del libro en algun nivel intermedio -- es una verificacion "
+        "adicional, no un error de calculo."
+    )
+    res.notas.append(
+        f"Longitud de anclaje del acero principal del contrafuerte: ld = {ld_ctf:.0f} cm "
+        f"(Ø{diam_ctf}), formula SIMPLIFICADA de ACI 318 Sec. 12.2.2 en kg/cm2 y cm (no es una "
+        "formula validada contra el Ejemplo 15.3 -- el libro no cubre anclaje en este capitulo). "
+        "Supone espaciamiento/recubrimiento adecuados y barra inferior sin recubrimiento "
+        "epoxico; verificar contra el codigo vigente (COVENIN 1753 u otro) antes de detallar "
+        "los planos finales."
     )
     if r["CL"] >= 0.5:
         res.notas.append(

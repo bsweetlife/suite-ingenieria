@@ -194,8 +194,84 @@ def test_corte_viga_vs_losa():
 
 
 def test_As_min_contrafuerte():
+    """As_min = 14/fy.b.d en la base (fondo de losa): b debe ser el espesor
+    REAL de la base (t_ctf_base=0.50 m, el contrafuerte se ensancha ahi), no
+    el espesor generico del resto del contrafuerte (t_adop=0.40 m) -- con
+    b=50 cm y d=216 cm da 36.0 cm2 (14/4200*50*216); con el b generico daria
+    28.8, que subestima el minimo real de la seccion que gobierna."""
     r = _motor(ENTRADA)
-    assert abs(r["As_min_ctf"] - 28.8) < 1.0
+    assert abs(r["As_min_ctf"] - 36.0) < 1.0
+    assert abs(r["fondo_losa_ctf"]["As_min"] - 36.0) < 1.0
+
+    # Nivel 1: As=1.78 cm2 (momento chico) pero As_min=12.8 cm2 con el b y d
+    # PROPIOS de ese nivel (b=t_adop=40 cm, d=96.0 cm) -- este es el numero
+    # que el libro usa para justificar "As=1.78 (< As_min 12.8)" en la fila 1
+    # de la tabla del Ejemplo 15.3 (Sec. 10).
+    secciones = r["secciones_ctf"]
+    assert abs(secciones[0]["As_min"] - 12.8) < 0.5
+    assert secciones[0]["As_gob"] > secciones[0]["As"]   # rige el As minimo, no el momento
+
+
+def test_armado_contrafuerte_reproduce_barras_del_libro():
+    """La tabla del Ejemplo 15.3 (Sec. 10) arma cada nivel con el MISMO
+    diametro (Ø1") y solo cambia la cantidad de barras: 3, 4, 11 y 14 en las
+    4 filas (niveles 1-3 y fondo de losa). Eligiendo el diametro por la
+    seccion mas exigida (fondo de losa) y recalculando la cantidad de barras
+    de ese diametro en cada nivel (con As_gob = max(As, As_min)), el motor
+    debe reproducir esos conteos dentro de +/-1 barra: el As continuo del
+    motor difiere del As ya redondeado del libro por ~1-6% (mismo margen que
+    test_contrafuerte_3_secciones), suficiente para mover ceil() al entero
+    siguiente en un par de niveles (p.ej. nivel 3: As=56.14 vs 55.47 del
+    libro, ambos a menos de 12,8 cm2/barra de diferencia con 1"=5,07 cm2)."""
+    from datos.acero import diametro_barras, barras_con_diametro
+    r = _motor(ENTRADA)
+    fondo = r["fondo_losa_ctf"]
+    diam = diametro_barras(fondo["As_gob"])
+    assert diam == "1\""
+
+    n_por_nivel = [barras_con_diametro(s["As_gob"], diam).n_barras for s in r["secciones_ctf"]]
+    n_fondo = barras_con_diametro(fondo["As_gob"], diam).n_barras
+    n_libro = [3, 4, 11]
+    for i, (obtenido, esperado) in enumerate(zip(n_por_nivel, n_libro), start=1):
+        assert abs(obtenido - esperado) <= 1, f"nivel {i}: {obtenido} barras vs libro {esperado}"
+    assert abs(n_fondo - 14) <= 1, f"fondo de losa: {n_fondo} barras vs libro 14"
+
+    # Cada conteo debe proveer al menos el As gobernante (nunca sub-armado).
+    for s in r["secciones_ctf"]:
+        assert barras_con_diametro(s["As_gob"], diam).As_provisto >= s["As_gob"]
+    assert barras_con_diametro(fondo["As_gob"], diam).As_provisto >= fondo["As_gob"]
+
+
+def test_ld_basico():
+    """Formula simplificada ACI 318 Sec. 12.2.2 en kg/cm2 y cm (ver docstring de
+    datos.acero.ld_basico para la conversion desde la formula imperial en psi/in).
+    Con fy=4200, f'c=200 y db=2.54 cm (1", > el umbral de #6/1.905 cm por lo que
+    usa la constante 5.30): ld = 4200*2.54/(5.30*raiz(200)) = 142.3 cm -- del
+    orden de 40-60 diametros de barra, el rango tipico citado para barras Grado
+    60 sin recubrimiento en concreto de resistencia normal (142.3/2.54 = 56 db)."""
+    from datos.acero import ld_basico
+    ld = ld_basico(4200, 200, 2.54)
+    assert abs(ld - 142.3) < 1.0
+    assert 40 * 2.54 <= ld <= 60 * 2.54
+    # Piso absoluto de 30 cm (12 in) del mismo articulo, con una barra chica.
+    assert ld_basico(2800, 250, 0.9525) >= 30.0
+
+
+def test_armado_contrafuerte_explica_continuidad_y_anclaje():
+    """El texto de armado debe explicar que las barras principales del
+    contrafuerte NO son grupos independientes por nivel: deben leerse los
+    cortes (14->12->5->3, ver test_armado_contrafuerte_reproduce_barras_del_libro)
+    y la longitud de anclaje mas alla de cada corte teorico."""
+    from calculadoras.muro_contrafuertes import calcular, CALCULADORA
+    d = CALCULADORA.valores_defecto()
+    d.update(ENTRADA)
+    res = calcular(d)
+    assert "Continuidad" in res.armado_texto
+    assert "se cortan 2 (quedan 12)" in res.armado_texto
+    assert "se cortan 7 (quedan 5)" in res.armado_texto
+    assert "se cortan 2 (quedan 3)" in res.armado_texto
+    assert "continuan hasta la punta del panel" in res.armado_texto
+    assert any("Longitud de anclaje" in n and "ACI 318" in n for n in res.notas)
 
 
 def test_geometrias_extremas_no_rompen():
@@ -240,6 +316,9 @@ if __name__ == "__main__":
     test_contrafuerte_fondo_de_losa_fila_4()
     test_corte_viga_vs_losa()
     test_As_min_contrafuerte()
+    test_armado_contrafuerte_reproduce_barras_del_libro()
+    test_ld_basico()
+    test_armado_contrafuerte_explica_continuidad_y_anclaje()
     test_geometrias_extremas_no_rompen()
     test_advertencia_CL_mayor_a_0_5()
     print("OK - el motor reproduce el Ejemplo 15.3 dentro de tolerancia.")
