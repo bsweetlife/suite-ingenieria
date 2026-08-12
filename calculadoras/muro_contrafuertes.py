@@ -444,6 +444,21 @@ def _motor(d: dict) -> dict:
     return r
 
 
+def _armado_principal_ctf(r: dict):
+    """Diametro unico + cantidad de barras del acero principal del contrafuerte
+    en cada nivel (mismo criterio en el texto de armado y en el esquema, para
+    que nunca queden desincronizados). Devuelve (diam_ctf, niveles, n_fondo)
+    con niveles = [{"nivel", "y", "n"}, ...] de tope a base."""
+    fondo = r["fondo_losa_ctf"]
+    diam_ctf = diametro_barras(fondo["As_gob"])
+    niveles = [
+        {"nivel": s["nivel"], "y": s["y"], "n": barras_con_diametro(s["As_gob"], diam_ctf).n_barras}
+        for s in r["secciones_ctf"]
+    ]
+    n_fondo = barras_con_diametro(fondo["As_gob"], diam_ctf).n_barras
+    return diam_ctf, niveles, n_fondo
+
+
 def calcular(d: dict) -> Resultado:
     r = _motor(d)
     res = Resultado()
@@ -653,7 +668,7 @@ def calcular(d: dict) -> Resultado:
 # --------------------------------------------------------------------------- #
 #  Esquema (dibujo): corte (elevacion) + planta
 # --------------------------------------------------------------------------- #
-def _corte(H, B, Bp, D, talon, puntera, Bpanel):
+def _corte(H, B, Bp, D, talon, puntera, Bpanel, armado=None):
     # Muros altos y angostos: se usan escalas horizontal y vertical
     # independientes (como en un croquis de mano), no una unica escala,
     # para que la base siga siendo legible.
@@ -696,6 +711,33 @@ def _corte(H, B, Bp, D, talon, puntera, Bpanel):
     p += cota_h(x0, x0 + Bpx, ybase + 28, f"B = {B:.2f} m")
     p.append({"k": "text", "x": x_stem + Bppx / 2, "y": ytop_muro - 6, "s": "B'", "size": 8,
               "anchor": "middle", "fill": GRIS})
+
+    if armado:
+        # Acero principal del contrafuerte: una linea representativa a lo
+        # largo del borde inclinado (traccionado), con los puntos de corte
+        # marcados -- no se dibujan las N barras individuales (a esta escala
+        # se superpondrian), es el mismo criterio de un croquis de mano: una
+        # linea + textos con la cantidad que sigue mas alla de cada corte.
+        diam_ctf, niveles, n_fondo = armado
+        off = 3.0   # separacion del contorno punteado de la cuna, hacia adentro
+        x_tip, y_tip = x_stem + Bppx, ytop_muro                # y=0 (punta del panel)
+        x_base, y_base = x0 + Bpx, ytop_losa                   # y=Bpanel (base del fuste)
+        x_fondo, y_fondo = x_base, ybase                       # y=Bpanel+D (fondo de losa, ya vertical)
+        p.append({"k": "line", "x1": x_tip - off, "y1": y_tip + off, "x2": x_base - off, "y2": y_base,
+                  "stroke": ACERO, "sw": 2.0})
+        p.append({"k": "line", "x1": x_base - off, "y1": y_base, "x2": x_fondo - off, "y2": y_fondo,
+                  "stroke": ACERO, "sw": 2.0})
+        for niv in niveles:
+            frac = niv["y"] / Bpanel
+            x = x_tip + frac * (x_base - x_tip) - off
+            y = y_tip + frac * (y_base - y_tip)
+            p.append({"k": "line", "x1": x - 3, "y1": y - 3, "x2": x + 3, "y2": y + 3,
+                      "stroke": ACERO, "sw": 1.1})
+            p.append({"k": "text", "x": x + 5, "y": y + 2, "s": f"{niv['n']}Ø{diam_ctf}",
+                      "size": 6.2, "anchor": "start", "fill": ACERO})
+        p.append({"k": "text", "x": x_fondo - off - 5, "y": y_fondo + 9, "s": f"{n_fondo}Ø{diam_ctf}",
+                  "size": 6.2, "anchor": "end", "fill": ACERO, "bold": True})
+
     return {"titulo": "Corte", "ancho": W, "alto": Hpx, "primitivas": p}
 
 
@@ -760,7 +802,10 @@ def esquema(entradas: dict, res: Resultado):
     talon = B - Bp - puntera
     Bpanel = H - D
     L, t = entradas["L_adop"], entradas["t_adop"]
-    return [_corte(H, B, Bp, D, talon, puntera, Bpanel), _planta(B, Bp, talon, puntera, L, t)]
+    r = _motor(entradas)
+    armado = _armado_principal_ctf(r)
+    return [_corte(H, B, Bp, D, talon, puntera, Bpanel, armado=armado),
+            _planta(B, Bp, talon, puntera, L, t)]
 
 
 # --------------------------------------------------------------------------- #

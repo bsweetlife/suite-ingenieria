@@ -274,6 +274,29 @@ def test_armado_contrafuerte_explica_continuidad_y_anclaje():
     assert any("Longitud de anclaje" in n and "ACI 318" in n for n in res.notas)
 
 
+def test_esquema_dibuja_armado_del_contrafuerte():
+    """El corte debe dibujar el acero principal (linea + marcas de corte con
+    Ø1" en cada nivel) ademas de la geometria; usa el mismo diametro y los
+    mismos conteos por nivel que el texto de armado, para que nunca queden
+    desincronizados (ver _armado_principal_ctf, usado por calcular() y
+    esquema()). Ademas valida que ambos renderizadores (SVG para la app,
+    Drawing de reportlab para el PDF) no truenen con las primitivas nuevas."""
+    from calculadoras.muro_contrafuertes import CALCULADORA
+    from motor.dibujo import primitivas_a_svg, primitivas_a_drawing
+    d = CALCULADORA.valores_defecto()
+    d.update(ENTRADA)
+    res = CALCULADORA.funcion(d)
+    corte = CALCULADORA.esquema(d, res)[0]
+    textos = [p["s"] for p in corte["primitivas"] if p["k"] == "text"]
+    assert any('3Ø1"' in t for t in textos)
+    assert any('5Ø1"' in t for t in textos)
+    assert any('12Ø1"' in t for t in textos)
+    assert any('14Ø1"' in t for t in textos)
+    # No debe reventar ninguno de los dos renderizadores con las primitivas nuevas.
+    assert "<svg" in primitivas_a_svg(corte)
+    primitivas_a_drawing(corte)
+
+
 def test_geometrias_extremas_no_rompen():
     """Con H muy chico, el neto de carga en talon/puntera puede invertir de
     signo (bearing < peso propio+tierra), volviendo Mu_talon/Mu_punt negativo.
@@ -319,6 +342,7 @@ if __name__ == "__main__":
     test_armado_contrafuerte_reproduce_barras_del_libro()
     test_ld_basico()
     test_armado_contrafuerte_explica_continuidad_y_anclaje()
+    test_esquema_dibuja_armado_del_contrafuerte()
     test_geometrias_extremas_no_rompen()
     test_advertencia_CL_mayor_a_0_5()
     print("OK - el motor reproduce el Ejemplo 15.3 dentro de tolerancia.")
