@@ -31,6 +31,18 @@ st.markdown("""
   .stApp { background: #f5f7fa; }
   section[data-testid="stSidebar"] { background: #1f3a5f; }
   section[data-testid="stSidebar"] * { color: #eaf0f6 !important; }
+  /* Los botones de navegacion traen fondo blanco del tema base de Streamlit:
+     con el texto forzado a claro (linea de arriba) quedaban ilegibles hasta
+     hacer hover/focus (unico momento en que el navegador daba contraste). */
+  section[data-testid="stSidebar"] div[data-testid="stButton"] button {
+      background-color: rgba(234,240,246,0.06) !important;
+      border: 1px solid rgba(234,240,246,0.35) !important;
+  }
+  section[data-testid="stSidebar"] div[data-testid="stButton"] button:hover,
+  section[data-testid="stSidebar"] div[data-testid="stButton"] button:focus {
+      background-color: rgba(234,240,246,0.16) !important;
+      border-color: rgba(234,240,246,0.7) !important;
+  }
   .tarjeta { background:#fff;border:1px solid #e2e8f0;border-radius:12px;
              padding:18px 20px;height:100%; }
   .chip-ok  { background:#e7f6ec;color:#1b7f3b;border-radius:20px;
